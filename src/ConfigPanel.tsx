@@ -18,6 +18,20 @@ import {
 
 const LIB_KEY = "kart-live-library-v1";
 const MAX_DRIVERS = 12;
+const DRIVER_COLORS = [
+  "#f5c84b",
+  "#47c7b4",
+  "#ff7b72",
+  "#82aaff",
+  "#e18ad5",
+  "#a8d66d",
+  "#ff9e57",
+  "#67b7e1",
+  "#d7a95f",
+  "#7bd3a8",
+  "#e86b9a",
+  "#bac7d9",
+];
 
 function useLibrary(ready: boolean, setError: (e: string) => void) {
   const [library, setLibrary] = useState<Library>(emptyLibrary);
@@ -262,7 +276,9 @@ export function ConfigPanel({
       setError("Impossible de retirer le pilote actuellement en piste.");
       return;
     }
-    while (ds.length < count) ds.push({ id: newId(), name: "" });
+    while (ds.length < count) {
+      ds.push({ id: newId(), name: "", color: DRIVER_COLORS[ds.length] });
+    }
     setDraft({ ...draft, drivers: ds });
   }
 
@@ -275,6 +291,8 @@ export function ConfigPanel({
     const drivers = draft.drivers.map((d, i) => ({
       ...d,
       name: d.name.trim() || `Pilote ${i + 1}`,
+      email: d.email?.trim() ?? "",
+      color: d.color ?? DRIVER_COLORS[i % DRIVER_COLORS.length],
     }));
     const circuit = { ...c, name: c.name.trim() };
     await onApply({ drivers, circuit });
@@ -405,19 +423,65 @@ export function ConfigPanel({
               ))}
             </datalist>
             {draft.drivers.map((d, i) => (
-              <div className="input-row" key={d.id}>
-                <label>#{i + 1}</label>
-                <input
-                  list="known-drivers"
+              <div className="driver-config" key={d.id}>
+                <div className="input-row">
+                  <label>#{i + 1}</label>
+                  <span className="driver-swatch" style={{ "--driver-color": d.color ?? DRIVER_COLORS[i % DRIVER_COLORS.length] } as React.CSSProperties} />
+                  <input
+                    list="known-drivers"
+                    disabled={disabled}
+                    maxLength={30}
+                    placeholder={`Pilote ${i + 1}`}
+                    value={d.name}
+                    onChange={(e) =>
+                      setDraft({
+                        ...draft,
+                        drivers: draft.drivers.map((x) =>
+                          x.id === d.id ? { ...x, name: e.target.value } : x,
+                        ),
+                      })
+                    }
+                  />
+                </div>
+                <div className="input-row driver-email-row">
+                  <label>Email pilote</label>
+                  <input
+                    type="email"
+                    disabled={disabled}
+                    placeholder="pilote@exemple.fr"
+                    value={d.email ?? ""}
+                    onChange={(e) =>
+                      setDraft({
+                        ...draft,
+                        drivers: draft.drivers.map((x) =>
+                          x.id === d.id ? { ...x, email: e.target.value } : x,
+                        ),
+                      })
+                    }
+                  />
+                </div>
+                <LapField
+                  label="Meilleur tour sec"
                   disabled={disabled}
-                  maxLength={30}
-                  placeholder={`Pilote ${i + 1}`}
-                  value={d.name}
-                  onChange={(e) =>
+                  value={d.bestLapDry ?? null}
+                  onChange={(value) =>
                     setDraft({
                       ...draft,
-                      drivers: draft.drivers.map((x) =>
-                        x.id === d.id ? { ...x, name: e.target.value } : x,
+                      drivers: draft.drivers.map((driver) =>
+                        driver.id === d.id ? { ...driver, bestLapDry: value } : driver,
+                      ),
+                    })
+                  }
+                />
+                <LapField
+                  label="Meilleur tour mouillé"
+                  disabled={disabled}
+                  value={d.bestLapWet ?? null}
+                  onChange={(value) =>
+                    setDraft({
+                      ...draft,
+                      drivers: draft.drivers.map((driver) =>
+                        driver.id === d.id ? { ...driver, bestLapWet: value } : driver,
                       ),
                     })
                   }

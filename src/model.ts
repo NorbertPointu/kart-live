@@ -1,5 +1,12 @@
 export type Driver = string;
-export type DriverInfo = { id: string; name: string };
+export type DriverInfo = {
+  id: string;
+  name: string;
+  email?: string;
+  color?: string;
+  bestLapDry?: number | null;
+  bestLapWet?: number | null;
+};
 export type GpsPoint = { lat: number; lng: number };
 export type GpsZone = GpsPoint & { radius: number };
 export type NamedPoint = GpsPoint & { id: string; name: string };
@@ -34,6 +41,35 @@ export type Segment = {
   start: number;
   end: number;
 };
+export type PitWindow = {
+  id: string;
+  label: string;
+  opensAt: number;
+  closesAt: number;
+  plannedAt: number | null;
+  stopMinutes: number;
+  status: "unplanned" | "planned" | "done";
+};
+export type PlannedRelay = {
+  id: string;
+  driver: Driver;
+  durationMinutes: number;
+};
+export type RaceStrategy = {
+  durationMinutes: number;
+  minRelays: number;
+  scheduledStartAt: number;
+  qualifyingMinutes: number;
+  qualifyingKarts: number;
+  changeoverMinutes: number;
+  minStintMinutes: number;
+  maxStintMinutes: number;
+  distributionMode: "next" | "remaining";
+  qualifyingOrder: Driver[];
+  qualifyingDone: Driver[];
+  fuelWindows: PitWindow[];
+  relays: PlannedRelay[];
+};
 export type EventState = {
   raceId: string;
   signal: Signal;
@@ -50,9 +86,23 @@ export type EventState = {
   fuel2: boolean;
   startAt: number | null;
   finishAt: number | null;
+  qualificationStartAt: number | null;
+  qualificationFinishAt: number | null;
   updatedAt: number;
   config: RaceConfig;
+  strategy: RaceStrategy;
 };
+export function currentPhase(
+  state: Pick<
+    EventState,
+    "phase" | "startAt" | "qualificationStartAt" | "qualificationFinishAt"
+  >,
+): Phase {
+  if (state.startAt !== null) return "race";
+  if (state.qualificationStartAt !== null)
+    return state.qualificationFinishAt === null ? "qualifying" : "race";
+  return state.phase;
+}
 export function newId() {
   return `${Date.now().toString(36)}${Math.random().toString(36).slice(2, 7)}`;
 }
@@ -70,12 +120,70 @@ export function emptyCircuit(): Circuit {
   };
 }
 export const defaultConfig: RaceConfig = {
-  drivers: ["A", "B", "C", "D"].map((id) => ({ id, name: `Pilote ${id}` })),
+  drivers: ["#f5c84b", "#47c7b4", "#ff7b72", "#82aaff"].map((color, index) => ({
+    id: String.fromCharCode(65 + index),
+    name: `Pilote ${String.fromCharCode(65 + index)}`,
+    color,
+    bestLapDry: null,
+    bestLapWet: null,
+  })),
   circuit: { ...emptyCircuit(), id: "lille-karting", name: "Lille Karting" },
 };
 export const emptyLibrary: Library = { circuits: [], driverNames: [] };
+export function defaultStrategy(driverIds: Driver[], now = Date.now()): RaceStrategy {
+  const start = new Date(now);
+  start.setHours(10, 35, 0, 0);
+  const windowAt = (hours: number, minutes: number) => {
+    const date = new Date(start);
+    date.setHours(hours, minutes, 0, 0);
+    return date.getTime();
+  };
+  return {
+    durationMinutes: 240,
+    minRelays: 7,
+    scheduledStartAt: start.getTime(),
+    qualifyingMinutes: 20,
+    qualifyingKarts: 1,
+    changeoverMinutes: 2,
+    minStintMinutes: 10,
+    maxStintMinutes: 45,
+    distributionMode: "next",
+    qualifyingOrder: [...driverIds],
+    qualifyingDone: [],
+    fuelWindows: [
+      {
+        id: "fuel-1",
+        label: "Ravitaillement 1",
+        opensAt: windowAt(11, 50),
+        closesAt: windowAt(12, 20),
+        plannedAt: null,
+        stopMinutes: 10,
+        status: "unplanned",
+      },
+      {
+        id: "fuel-2",
+        label: "Ravitaillement 2",
+        opensAt: windowAt(13, 5),
+        closesAt: windowAt(13, 35),
+        plannedAt: null,
+        stopMinutes: 10,
+        status: "unplanned",
+      },
+    ],
+    relays: [],
+  };
+}
 export function normalize(data: Partial<EventState>): EventState {
-  return { ...initial, ...data, config: data.config ?? defaultConfig };
+  const config = data.config ?? defaultConfig;
+  return {
+    ...initial,
+    ...data,
+    config,
+    strategy: {
+      ...defaultStrategy(config.drivers.map((driver) => driver.id)),
+      ...data.strategy,
+    },
+  };
 }
 export function driverName(s: EventState, id: Driver | null) {
   if (!id) return "";
@@ -114,8 +222,11 @@ export const initial: EventState = {
   fuel2: false,
   startAt: null,
   finishAt: null,
+  qualificationStartAt: null,
+  qualificationFinishAt: null,
   updatedAt: Date.now(),
   config: defaultConfig,
+  strategy: defaultStrategy(defaultConfig.drivers.map((driver) => driver.id)),
 };
 export function totals(s: EventState, now: number) {
   const r: Record<Driver, { qualifying: number; race: number }> = {};

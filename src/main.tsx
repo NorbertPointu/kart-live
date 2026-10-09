@@ -1,54 +1,59 @@
-import React, { useEffect, useState } from "react";
-import { createRoot } from "react-dom/client";
-import { FirebaseError } from "firebase/app";
+import "./style.css";
+
 import {
+  Clock3,
+  CalendarClock,
+  Flag,
+  Fuel,
+  LogIn,
+  LogOut,
+  Pause,
+  Play,
+  Radio,
+  RotateCcw,
+  Send,
+  Settings,
+  ShieldCheck,
+  Users,
+  Wifi,
+  WifiOff,
+} from "lucide-react";
+import {
+  Driver,
+  EventState,
+  Signal,
+  clock,
+  closeSegment,
+  currentPhase,
+  driverName,
+  format,
+  formatLap,
+  initial,
+  newId,
+  normalize,
+  totals,
+} from "./model";
+import React, { useEffect, useState } from "react";
+import {
+  User,
   onAuthStateChanged,
   signInAnonymously,
   signInWithEmailAndPassword,
   signOut,
-  User,
 } from "firebase/auth";
+import { auth, configured, db, eventId } from "./firebase";
 import {
   collection,
   doc,
   onSnapshot,
   writeBatch,
 } from "firebase/firestore";
-import { auth, configured, db, eventId } from "./firebase";
-import {
-  clock,
-  closeSegment,
-  driverName,
-  EventState,
-  format,
-  formatLap,
-  initial,
-  newId,
-  normalize,
-  Signal,
-  totals,
-  Driver,
-  Phase,
-} from "./model";
+
 import { ConfigPanel } from "./ConfigPanel";
-import {
-  Flag,
-  Radio,
-  Clock3,
-  Users,
-  ShieldCheck,
-  Wifi,
-  WifiOff,
-  Fuel,
-  RotateCcw,
-  LogIn,
-  LogOut,
-  Pause,
-  Play,
-  Send,
-  Settings,
-} from "lucide-react";
-import "./style.css";
+import { StrategyPanel } from "./StrategyPanel";
+import { plannedDriverAt } from "./strategy";
+import { FirebaseError } from "firebase/app";
+import { createRoot } from "react-dom/client";
 const ADMIN_UID = "k080KWL0WJTnbHzEJARVLfdzKWo1";
 const KEY = "kart-live-demo-v1";
 const HISTORY_KEY = `${KEY}-history`;
@@ -66,10 +71,11 @@ function App() {
   const [password, setPassword] = useState("");
   const [error, setError] = useState("");
   const [message, setMessage] = useState("");
-  const [qual, setQual] = useState<Phase>("race");
   const [admin, setAdmin] = useState(false);
   const [confirmReset, setConfirmReset] = useState(false);
-  const [tab, setTab] = useState<"race" | "config">("race");
+  const [confirmFinishRace, setConfirmFinishRace] = useState(false);
+  const [confirmNewQualification, setConfirmNewQualification] = useState(false);
+  const [tab, setTab] = useState<"race" | "strategy" | "config">("race");
   useEffect(() => {
     const id = setInterval(() => setNow(Date.now()), 250);
     return () => clearInterval(id);
@@ -169,6 +175,14 @@ function App() {
     state.startAt !== null
       ? Math.min(now, state.finishAt ?? Infinity) - state.startAt
       : 0;
+  const qualificationElapsed =
+    state.qualificationStartAt !== null
+      ? Math.max(
+          0,
+          Math.min(now, state.qualificationFinishAt ?? Infinity) -
+            state.qualificationStartAt,
+        )
+      : 0;
   const relayNumber =
     state.segments.length + (state.activeDriver ? 1 : 0);
   const total = totals(state, now);
@@ -198,6 +212,25 @@ function App() {
     MESSAGE: "MESSAGE DU STAND",
   };
   const canEdit = !configured || admin;
+  const phase = currentPhase(state);
+  const phaseElapsed = phase === "qualifying" ? qualificationElapsed : elapsed;
+  const phaseDuration =
+    (phase === "qualifying"
+      ? state.strategy.qualifyingMinutes
+      : state.strategy.durationMinutes) * 60_000;
+  const remainingTime = Math.max(0, phaseDuration - phaseElapsed);
+  const raceInProgress = state.startAt !== null && state.finishAt === null;
+  const plannedDriver =
+    state.finishAt === null
+      ? plannedDriverAt(
+          state.strategy,
+          phase,
+          now,
+          state.qualificationStartAt,
+          state.startAt,
+        )
+      : null;
+  const currentDriver = plannedDriver ?? state.activeDriver;
   function start(driver: Driver) {
     const t = Date.now();
     const closed = closeSegment(state, t);
@@ -211,7 +244,7 @@ function App() {
       signalAt: t,
       signalConfirmedAt: 0,
       signalExpiresAt: t + 120000,
-      phase: qual,
+      phase,
     }, "relay_started");
   }
   function pit() {
@@ -298,17 +331,88 @@ function App() {
           signalAt: 0,
           signalConfirmedAt: 0,
           signalExpiresAt: 0,
-          phase: qual,
+          phase: "race",
+          qualificationStartAt: null,
+          qualificationFinishAt: null,
+          strategy: {
+            ...state.strategy,
+            qualifyingDone: [],
+          },
         }
       : state;
-    void save({ ...next, startAt: t, finishAt: null }, "race_started");
+    void save({
+      ...next,
+      phase: "race",
+      startAt: t,
+      finishAt: null,
+      signal: "PUSH",
+      message: "",
+      signalAt: t,
+      signalConfirmedAt: 0,
+      signalExpiresAt: t + 120000,
+    }, "race_started");
+  }
+  function startQualification() {
+    const t = Date.now();
+    void save({
+      ...state,
+      phase: "qualifying",
+      qualificationStartAt: t,
+      qualificationFinishAt: null,
+      signal: "PUSH",
+      message: "",
+      signalAt: t,
+      signalConfirmedAt: 0,
+      signalExpiresAt: t + 120000,
+    }, "qualification_started");
+  }
+  function finishQualification() {
+    const t = Date.now();
+    const closed = closeSegment(state, t);
+    void save({
+      ...closed,
+      phase: "race",
+      qualificationFinishAt: t,
+    }, "qualification_finished");
   }
   function finishRace() {
     const t = Date.now();
+    setConfirmFinishRace(false);
     void save(
       { ...closeSegment(state, t), finishAt: t, pitSince: t },
       "race_finished",
     );
+  }
+  function prepareNewQualification() {
+    setConfirmNewQualification(false);
+    void save({
+      ...state,
+      raceId: newId(),
+      signal: "READY",
+      message: "",
+      signalAt: 0,
+      signalConfirmedAt: 0,
+      signalExpiresAt: 0,
+      activeDriver: null,
+      activeSince: null,
+      phase: "qualifying",
+      segments: [],
+      pitSince: null,
+      fuel1: false,
+      fuel2: false,
+      startAt: null,
+      finishAt: null,
+      qualificationStartAt: null,
+      qualificationFinishAt: null,
+      strategy: {
+        ...state.strategy,
+        qualifyingDone: [],
+        fuelWindows: state.strategy.fuelWindows.map((window) => ({
+          ...window,
+          status: window.plannedAt === null ? "unplanned" : "planned",
+        })),
+      },
+    }, "race_reset");
   }
   function goRole(r: "stand" | "driver") {
     history.pushState({}, "", r === "driver" ? "/driver" : "/");
@@ -493,6 +597,12 @@ function App() {
               <Flag size={16} /> Course
             </button>
             <button
+              className={tab === "strategy" ? "tab tab-active" : "tab"}
+              onClick={() => setTab("strategy")}
+            >
+              <CalendarClock size={16} /> Stratégie
+            </button>
+            <button
               className={tab === "config" ? "tab tab-active" : "tab"}
               onClick={() => setTab("config")}
             >
@@ -508,25 +618,116 @@ function App() {
               setError={setError}
               onApply={(config) => save({ ...state, config }, "configuration_updated")}
             />
+          ) : tab === "strategy" ? (
+            <StrategyPanel
+              strategy={state.strategy}
+              drivers={team}
+              canEdit={canEdit}
+              onError={setError}
+              onApply={(strategy) => save({ ...state, strategy }, "strategy_updated")}
+            />
           ) : (
           <>
-          <section className="stats">
+          <section className="race-phase-panel" aria-label="Phases de l’épreuve">
+            <div className="phase-switch" aria-label="Mode de l’épreuve">
+              <span
+                className={phase === "qualifying" ? "phase-tab phase-tab-active" : "phase-tab"}
+                aria-current={phase === "qualifying" ? "step" : undefined}
+              >
+                Qualifications
+              </span>
+              <span
+                className={phase === "race" ? "phase-tab phase-tab-active" : "phase-tab"}
+                aria-current={phase === "race" ? "step" : undefined}
+              >
+                Course
+              </span>
+            </div>
+            <div className="race-phase-status">
+              <div>
+                <span className="eyebrow">{phase === "qualifying" ? "QUALIFICATIONS" : "COURSE"}</span>
+                <strong>{phase === "qualifying"
+                  ? state.qualificationFinishAt ? "Terminées" : state.qualificationStartAt ? "En cours" : "En attente"
+                  : state.finishAt ? "Terminée" : state.startAt ? "En cours" : "En attente"}</strong>
+                <small>{plannedDriver ? `Pilote prévu : ${driverName(state, plannedDriver)}` : "Aucun pilote prévu à cet instant"}</small>
+              </div>
+              {phase === "qualifying" ? (
+                <button
+                  className={state.qualificationStartAt && !state.qualificationFinishAt ? "outline" : "primary"}
+                  disabled={!canEdit || (!state.qualificationStartAt && (Boolean(state.activeDriver) || Boolean(state.startAt && !state.finishAt))) || Boolean(state.qualificationFinishAt)}
+                  onClick={state.qualificationStartAt && !state.qualificationFinishAt ? finishQualification : startQualification}
+                >
+                  {state.qualificationStartAt && !state.qualificationFinishAt ? <Flag size={16} /> : <Play size={16} />}
+                  {state.qualificationStartAt && !state.qualificationFinishAt ? "Fin Qualification" : "Départ Qualification"}
+                </button>
+              ) : (
+                <button
+                  className={state.startAt && !state.finishAt ? "outline" : "primary"}
+                  disabled={!canEdit || (!state.qualificationFinishAt && !raceInProgress && state.phase !== "race")}
+                  onClick={state.finishAt
+                    ? () => setConfirmNewQualification(true)
+                    : state.startAt
+                      ? () => setConfirmFinishRace(true)
+                      : startRace}
+                >
+                  {state.finishAt ? <RotateCcw size={16} /> : state.startAt ? <Flag size={16} /> : <Play size={16} />}
+                  {state.startAt && !state.finishAt ? "Fin Course" : state.finishAt ? "Course terminée" : "Départ Course"}
+                </button>
+              )}
+            </div>
+            {confirmFinishRace && (
+              <div className="phase-confirm" role="alertdialog" aria-label="Confirmer la fin de course">
+                <p>Confirmer la fin de course et enregistrer l’heure d’arrivée ?</p>
+                <button className="outline" onClick={() => setConfirmFinishRace(false)}>
+                  Annuler
+                </button>
+                <button className="primary" onClick={finishRace}>
+                  <Flag size={16} /> Confirmer la fin de course
+                </button>
+              </div>
+            )}
+            {confirmNewQualification && (
+              <div className="phase-confirm" role="alertdialog" aria-label="Nouvelle qualification">
+                <p>La course terminée restera dans l’historique. Préparer une nouvelle qualification ?</p>
+                <button className="outline" onClick={() => setConfirmNewQualification(false)}>
+                  Annuler
+                </button>
+                <button className="primary" onClick={prepareNewQualification}>
+                  <RotateCcw size={16} /> Nouvelle qualification
+                </button>
+              </div>
+            )}
+          </section>
+          <section className={`stats${phase === "qualifying" ? " stats-qualifying" : ""}`}>
             <article className="stat">
               <span>
-                <Clock3 size={17} /> TEMPS DE COURSE
+                <Clock3 size={17} /> TEMPS {phase === "qualifying" ? "DE QUALIFICATION" : "DE COURSE"}
               </span>
-              <strong>{format(elapsed)}</strong>
+              <strong>{format(phase === "qualifying" ? qualificationElapsed : elapsed)}</strong>
               <small>
-                {state.startAt ? "Chronomètre lancé" : "Prêt pour le départ"}
+                {phase === "qualifying"
+                  ? state.qualificationStartAt ? "Chronomètre lancé" : "Prêt pour le départ"
+                  : state.startAt ? "Chronomètre lancé" : "Prêt pour le départ"}
               </small>
+            </article>
+            <article className="stat">
+              <span>
+                <Clock3 size={17} /> TEMPS RESTANT
+              </span>
+              <strong>{format(remainingTime)}</strong>
+              <small>{phaseElapsed > 0 ? "Avant la fin prévue" : "Durée totale prévue"}</small>
             </article>
             <article className="stat">
               <span>
                 <Users size={17} /> PILOTE ACTUEL
               </span>
-              <strong>{driverName(state, state.activeDriver) || "—"}</strong>
+              <strong>{driverName(state, currentDriver) || "—"}</strong>
               <small>
-                {state.activeDriver
+                {plannedDriver
+                  ? state.activeDriver === plannedDriver
+                    ? `Selon la stratégie · ${format(activeMs)} en piste`
+                    : "Selon la stratégie"
+                  : state.activeDriver
                   ? `Roulage : ${format(activeMs)}`
                   : state.pitSince
                     ? "Kart aux stands"
@@ -547,15 +748,17 @@ function App() {
               </strong>
               <small>Compteur indicatif</small>
             </article>
-            <article className="stat">
-              <span>
-                <Fuel size={17} /> RAVITAILLEMENTS
-              </span>
-              <strong>
-                {Number(state.fuel1) + Number(state.fuel2)} <em>/ 2</em>
-              </strong>
-              <small>Deux postes de plein</small>
-            </article>
+            {phase === "race" && (
+              <article className="stat">
+                <span>
+                  <Fuel size={17} /> RAVITAILLEMENTS
+                </span>
+                <strong>
+                  {Number(state.fuel1) + Number(state.fuel2)} <em>/ 2</em>
+                </strong>
+                <small>Deux postes de plein</small>
+              </article>
+            )}
           </section>
           <section className="columns">
             <div className="stack">
@@ -618,17 +821,6 @@ function App() {
                     <Play size={19} /> Gestion des relais
                   </h2>
                 </div>
-                <div className="input-row">
-                  <label>Type de session</label>
-                  <select
-                    disabled={!canEdit}
-                    value={qual}
-                    onChange={(e) => setQual(e.target.value as Phase)}
-                  >
-                    <option value="qualifying">Qualifications</option>
-                    <option value="race">Course</option>
-                  </select>
-                </div>
                 <div className="driver-buttons">
                   {team.map((d) => (
                     <button
@@ -649,22 +841,6 @@ function App() {
                     onClick={pit}
                   >
                     <Pause size={17} /> Entrée au stand / fin du relais
-                  </button>
-                  <button
-                    className="outline"
-                    disabled={!canEdit || (Boolean(state.startAt) && !state.finishAt)}
-                    onClick={startRace}
-                  >
-                    <Clock3 size={17} /> {state.finishAt ? "Nouvelle course" : "Départ course"}
-                  </button>
-                  <button
-                    disabled={
-                      !canEdit || !state.startAt || Boolean(state.finishAt)
-                    }
-                    className="outline"
-                    onClick={finishRace}
-                  >
-                    <Flag size={17} /> Arrivée
                   </button>
                 </div>
                 <p className="muted tiny">
@@ -712,7 +888,7 @@ function App() {
                   {format(Math.max(...drivenAll) - Math.min(...drivenAll))}
                 </div>
               </article>
-              <article className="panel">
+              {phase === "race" && <article className="panel">
                 <div className="panel-title">
                   <h2>
                     <Fuel size={19} /> Ravitaillements
@@ -753,7 +929,7 @@ function App() {
                       ? "Fenêtre 2 en cours."
                       : ""}
                 </p>
-              </article>
+              </article>}
               <article className="panel">
                 <div className="panel-title">
                   <h2>
