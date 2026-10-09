@@ -51,7 +51,7 @@ import {
 
 import { ConfigPanel } from "./ConfigPanel";
 import { StrategyPanel } from "./StrategyPanel";
-import { plannedDriverAt } from "./strategy";
+import { nextPlannedDriverAt, plannedDriverAt } from "./strategy";
 import { FirebaseError } from "firebase/app";
 import { createRoot } from "react-dom/client";
 const ADMIN_UID = "k080KWL0WJTnbHzEJARVLfdzKWo1";
@@ -63,6 +63,9 @@ function App() {
   const [role, setRole] = useState<"stand" | "driver">(
     location.pathname.startsWith("/driver") ? "driver" : "stand",
   );
+  const [compactMobile, setCompactMobile] = useState(
+    () => window.matchMedia("(max-width: 530px)").matches,
+  );
   const [state, setState] = useState<EventState>(initial);
   const [now, setNow] = useState(Date.now());
   const [user, setUser] = useState<User | null>(null);
@@ -71,6 +74,7 @@ function App() {
   const [password, setPassword] = useState("");
   const [error, setError] = useState("");
   const [message, setMessage] = useState("");
+  const [showOptionalMessage, setShowOptionalMessage] = useState(false);
   const [admin, setAdmin] = useState(false);
   const [confirmReset, setConfirmReset] = useState(false);
   const [confirmFinishRace, setConfirmFinishRace] = useState(false);
@@ -79,6 +83,12 @@ function App() {
   useEffect(() => {
     const id = setInterval(() => setNow(Date.now()), 250);
     return () => clearInterval(id);
+  }, []);
+  useEffect(() => {
+    const media = window.matchMedia("(max-width: 530px)");
+    const update = () => setCompactMobile(media.matches);
+    media.addEventListener("change", update);
+    return () => media.removeEventListener("change", update);
   }, []);
   useEffect(() => {
     if (!configured) {
@@ -231,6 +241,13 @@ function App() {
         )
       : null;
   const currentDriver = plannedDriver ?? state.activeDriver;
+  const nextDriver = nextPlannedDriverAt(
+    state.strategy,
+    phase,
+    now,
+    state.qualificationStartAt,
+    state.startAt,
+  );
   function start(driver: Driver) {
     const t = Date.now();
     const closed = closeSegment(state, t);
@@ -510,7 +527,7 @@ function App() {
                   ? state.message
                   : effectiveSignal === "READY"
                     ? state.startAt === null
-                      ? "DÉPART"
+                      ? phase === "race" ? "PRÊT POUR LE DÉPART" : "DÉPART"
                       : "DANS LES STANDS"
                     : signalDescription[effectiveSignal]}
             </span>
@@ -644,12 +661,9 @@ function App() {
               </span>
             </div>
             <div className="race-phase-status">
-              <div>
-                <span className="eyebrow">{phase === "qualifying" ? "QUALIFICATIONS" : "COURSE"}</span>
-                <strong>{phase === "qualifying"
-                  ? state.qualificationFinishAt ? "Terminées" : state.qualificationStartAt ? "En cours" : "En attente"
-                  : state.finishAt ? "Terminée" : state.startAt ? "En cours" : "En attente"}</strong>
-                <small>{plannedDriver ? `Pilote prévu : ${driverName(state, plannedDriver)}` : "Aucun pilote prévu à cet instant"}</small>
+              <div className="phase-timer">
+                <small>TEMPS ÉCOULÉ</small>
+                <strong>{format(phaseElapsed)}</strong>
               </div>
               {phase === "qualifying" ? (
                 <button
@@ -699,25 +713,7 @@ function App() {
             )}
           </section>
           <section className={`stats${phase === "qualifying" ? " stats-qualifying" : ""}`}>
-            <article className="stat">
-              <span>
-                <Clock3 size={17} /> TEMPS {phase === "qualifying" ? "DE QUALIFICATION" : "DE COURSE"}
-              </span>
-              <strong>{format(phase === "qualifying" ? qualificationElapsed : elapsed)}</strong>
-              <small>
-                {phase === "qualifying"
-                  ? state.qualificationStartAt ? "Chronomètre lancé" : "Prêt pour le départ"
-                  : state.startAt ? "Chronomètre lancé" : "Prêt pour le départ"}
-              </small>
-            </article>
-            <article className="stat">
-              <span>
-                <Clock3 size={17} /> TEMPS RESTANT
-              </span>
-              <strong>{format(remainingTime)}</strong>
-              <small>{phaseElapsed > 0 ? "Avant la fin prévue" : "Durée totale prévue"}</small>
-            </article>
-            <article className="stat">
+            <article className="stat stat-current">
               <span>
                 <Users size={17} /> PILOTE ACTUEL
               </span>
@@ -734,42 +730,23 @@ function App() {
                     : "Aucun pilote actif"}
               </small>
             </article>
-            <article className="stat">
-              <span>
-                <RotateCcw size={17} /> CHANGEMENTS
-              </span>
-              <strong>
-                {Math.max(
-                  0,
-                  state.segments.filter((x) => x.phase === "race").length -
-                    (state.activeDriver ? 0 : 1),
-                )}{" "}
-                <em>/ 7 min.</em>
-              </strong>
-              <small>Compteur indicatif</small>
-            </article>
-            {phase === "race" && (
-              <article className="stat">
+              <article className="stat stat-remaining">
                 <span>
-                  <Fuel size={17} /> RAVITAILLEMENTS
+                  <Clock3 size={17} /> TEMPS RESTANT
                 </span>
-                <strong>
-                  {Number(state.fuel1) + Number(state.fuel2)} <em>/ 2</em>
-                </strong>
-                <small>Deux postes de plein</small>
+                <strong>{format(remainingTime)}</strong>
+                <small>{phaseElapsed > 0 ? "Avant la fin prévue" : "Durée totale prévue"}</small>
               </article>
-            )}
-          </section>
-          <section className="columns">
-            <div className="stack">
-              <article className="panel">
+              <article className="panel pilot-command-panel">
                 <div className="panel-title">
                   <h2>
                     <Radio size={19} /> Consignes au pilote
                   </h2>
                   <span className="pill active-signal">
                     {effectiveSignal === "READY"
-                      ? "AUCUNE CONSIGNE"
+                      ? phase === "race" && state.startAt === null && state.finishAt === null
+                        ? "PRÊT POUR LE DÉPART"
+                        : "AUCUNE CONSIGNE"
                       : `MESSAGE ACTIF : ${effectiveSignal === "MESSAGE" ? state.message : signalDescription[effectiveSignal]}`}
                   </span>
                 </div>
@@ -793,28 +770,69 @@ function App() {
                   >
                     GO
                   </button>
-                </div>
-                <div className="input-row">
-                  <input
-                    disabled={!canEdit}
-                    placeholder="Message facultatif (80 caractères)"
-                    value={message}
-                    maxLength={80}
-                    onChange={(e) => setMessage(e.target.value)}
-                  />
                   <button
-                    disabled={!canEdit || !message.trim()}
-                    className="primary send-message"
-                    onClick={sendCustomMessage}
+                    type="button"
+                    className="outline message-toggle"
+                    aria-expanded={showOptionalMessage}
+                    onClick={() => setShowOptionalMessage((visible) => !visible)}
                   >
-                    <Send size={16} /> ENVOYER
+                    <Send size={14} /> {showOptionalMessage ? "Masquer le message" : "Message facultatif"}
                   </button>
                 </div>
-                <p className="muted tiny">
-                  Une consigne écrite reste visible 20 secondes. Les consignes
-                  ne remplacent jamais les drapeaux et instructions des commissaires.
-                </p>
+                {showOptionalMessage && (
+                  <div className="input-row optional-message">
+                    <input
+                      disabled={!canEdit}
+                      placeholder="Message facultatif (80 caractères)"
+                      value={message}
+                      maxLength={80}
+                      onChange={(e) => setMessage(e.target.value)}
+                    />
+                    <button
+                      disabled={!canEdit || !message.trim()}
+                      className="primary send-message"
+                      onClick={sendCustomMessage}
+                    >
+                      <Send size={16} /> ENVOYER
+                    </button>
+                  </div>
+                )}
               </article>
+            <article className="stat stat-next">
+              <span>
+                <Users size={17} /> PROCHAIN PILOTE
+              </span>
+              <strong>{driverName(state, nextDriver) || "—"}</strong>
+              <small>{nextDriver ? "Selon la stratégie" : "Aucun passage suivant"}</small>
+            </article>
+            <article className="stat stat-changes">
+              <span>
+                <RotateCcw size={17} /> CHANGEMENTS
+              </span>
+              <strong>
+                {Math.max(
+                  0,
+                  state.segments.filter((x) => x.phase === "race").length -
+                    (state.activeDriver ? 0 : 1),
+                )}{" "}
+                <em>/ 7 min.</em>
+              </strong>
+              <small>Compteur indicatif</small>
+            </article>
+            {phase === "race" && (
+              <article className="stat stat-fuel">
+                <span>
+                  <Fuel size={17} /> RAVITAILLEMENTS
+                </span>
+                <strong>
+                  {Number(state.fuel1) + Number(state.fuel2)} <em>/ 2</em>
+                </strong>
+                <small>Deux postes de plein</small>
+              </article>
+            )}
+          </section>
+          <section className="columns">
+            <div className="stack">
               <article className="panel">
                 <div className="panel-title">
                   <h2>
@@ -851,13 +869,13 @@ function App() {
               </article>
             </div>
             <div className="stack">
-              <article className="panel">
-                <div className="panel-title">
+              <details className="panel mobile-details" open={!compactMobile}>
+                <summary className="panel-title">
                   <h2>
                     <Users size={19} /> Temps de roulage
                   </h2>
                   <span className="pill">ÉGALITÉ</span>
-                </div>
+                </summary>
                 <p className="muted tiny">
                   Qualifications + course · objectif : même temps pour chacun
                 </p>
@@ -887,7 +905,7 @@ function App() {
                   Écart max :{" "}
                   {format(Math.max(...drivenAll) - Math.min(...drivenAll))}
                 </div>
-              </article>
+              </details>
               {phase === "race" && <article className="panel">
                 <div className="panel-title">
                   <h2>
@@ -930,12 +948,12 @@ function App() {
                       : ""}
                 </p>
               </article>}
-              <article className="panel">
-                <div className="panel-title">
+              <details className="panel mobile-details" open={!compactMobile}>
+                <summary className="panel-title">
                   <h2>
                     <Clock3 size={19} /> Historique des relais
                   </h2>
-                </div>
+                </summary>
                 <div className="history">
                   {state.segments.length ? (
                     state.segments
@@ -957,7 +975,7 @@ function App() {
                     <p className="muted">Aucun relais terminé.</p>
                   )}
                 </div>
-              </article>
+              </details>
             </div>
           </section>
           </>

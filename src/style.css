@@ -149,12 +149,25 @@ button.subtle {
 }
 .stats {
   display: grid;
-  grid-template-columns: repeat(5, minmax(0, 1fr));
+  grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 15px;
   margin-bottom: 20px;
 }
 .stats-qualifying {
-  grid-template-columns: repeat(4, minmax(0, 1fr));
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+.pilot-command-panel {
+  grid-column: 1 / -1;
+  margin: 0;
+}
+.message-toggle {
+  grid-column: 1 / -1;
+  justify-self: start;
+  min-height: 34px;
+  padding: 6px 10px;
+}
+.optional-message {
+  margin-top: 10px;
 }
 .stat,
 .panel {
@@ -205,6 +218,16 @@ button.subtle {
   justify-content: space-between;
   gap: 8px;
   margin-bottom: 20px;
+}
+.mobile-details > summary {
+  list-style: none;
+  cursor: pointer;
+}
+.mobile-details > summary::-webkit-details-marker {
+  display: none;
+}
+.mobile-details:not([open]) > summary {
+  margin-bottom: 0;
 }
 .panel h2 {
   display: flex;
@@ -858,6 +881,16 @@ button.subtle {
   color: #91a2ba;
   font-size: 11px;
 }
+.phase-timer {
+  display: grid;
+  gap: 3px;
+  min-width: 120px;
+}
+.phase-timer small {
+  color: #91a2ba;
+  font-size: 10px;
+  font-weight: 800;
+}
 .phase-confirm {
   grid-column: 1 / -1;
   display: flex;
@@ -1131,14 +1164,18 @@ footer {
   }
 }
 @media (max-width: 530px) {
-  .heading {
-    justify-content: flex-end;
-    margin-bottom: 14px;
+  .dashboard {
+    padding: 8px 12px 32px;
   }
-  .heading .eyebrow,
-  .heading h1,
-  .heading > div > .muted {
+  .heading {
     display: none;
+  }
+  .race-phase-panel {
+    position: sticky;
+    top: 8px;
+    z-index: 5;
+    margin-bottom: 12px;
+    padding: 10px;
   }
   .topbar {
     padding: 0 12px;
@@ -1156,8 +1193,21 @@ footer {
   .top-actions {
     gap: 7px;
   }
+  .tabs {
+    margin-bottom: 8px;
+  }
   .stats {
     gap: 8px;
+  }
+  .stats .stat-current { order: 1; }
+  .stats .stat-remaining { order: 2; }
+  .stats .pilot-command-panel { order: 3; }
+  .stats .stat-next { order: 4; }
+  .stats .stat-changes { order: 5; }
+  .stats .stat-fuel { order: 6; }
+  .stats .pilot-command-panel,
+  .stats .stat-fuel {
+    grid-column: 1 / -1;
   }
   .stat,
   .panel {
@@ -1171,12 +1221,6 @@ footer {
   }
   .driver-buttons {
     grid-template-columns: repeat(2, minmax(0, 1fr));
-  }
-  .heading {
-    align-items: flex-start;
-  }
-  .heading h1 {
-    font-size: 24px;
   }
   .right-head {
     display: none;

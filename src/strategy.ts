@@ -260,6 +260,53 @@ export function plannedDriverAt(
   return currentItem?.kind === "relay" ? currentItem.relay.driver : null;
 }
 
+export function nextPlannedDriverAt(
+  strategy: RaceStrategy,
+  phase: Phase,
+  now: number,
+  qualificationStartAt: number | null,
+  raceStartAt: number | null,
+): Driver | null {
+  if (phase === "qualifying") {
+    const startAt =
+      qualificationStartAt ??
+      strategy.scheduledStartAt - strategy.qualifyingMinutes * 60_000;
+    const slots = scheduleQualifying(
+      strategy.qualifyingOrder,
+      strategy.qualifyingMinutes,
+      strategy.qualifyingKarts,
+      startAt,
+    );
+    const currentSlot = slots.find(
+      (slot) => now >= slot.startAt && now < slot.endAt,
+    );
+    const nextSlot = slots.find(
+      (slot) =>
+        slot.startAt > now &&
+        !strategy.qualifyingDone.includes(slot.driver) &&
+        (!currentSlot || slot.startAt >= currentSlot.endAt),
+    );
+    return (
+      nextSlot?.driver ??
+      slots.find(
+        (slot) =>
+          slot.endAt > now && !strategy.qualifyingDone.includes(slot.driver),
+      )?.driver ??
+      null
+    );
+  }
+
+  const relays = buildStrategyTimeline(
+    strategy,
+    raceStartAt ?? strategy.scheduledStartAt,
+  ).filter((item) => item.kind === "relay");
+  return (
+    relays.find((item) => item.startAt > now)?.relay.driver ??
+    (raceStartAt === null ? relays[0]?.relay.driver : null) ??
+    null
+  );
+}
+
 export function pitWindowAt(window: PitWindow, at: number): PitWindow {
   return {
     ...window,

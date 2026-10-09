@@ -5,6 +5,7 @@ import {
   buildStrategyTimeline,
   generateStrategy,
   moveRelay,
+  nextPlannedDriverAt,
   plannedDriverAt,
   pitWindowAt,
   resizeRelay,
@@ -131,4 +132,10 @@ test("anchors strategy pit and relay times at the actual race start", () => {
   const timeline = buildStrategyTimeline(strategy, 1_000_000);
   assert.equal(timeline[0].startAt, 1_000_000);
   assert.ok(timeline.every((item) => item.startAt >= 1_000_000));
+});
+
+test("selects the next strategy pilot for qualification and race", () => {
+  const strategy = sampleStrategy({ qualifyingKarts: 2 });
+  assert.equal(nextPlannedDriverAt(strategy, "qualifying", 5 * 60_000, 0, null), "c");
+  assert.equal(nextPlannedDriverAt(strategy, "race", 35 * 60_000, null, 0), "c");
 });
