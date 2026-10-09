@@ -173,8 +173,11 @@ function App() {
       activeDriver: driver,
       activeSince: t,
       pitSince: null,
-      signal: "READY",
-      signalExpiresAt: 0,
+      signal: "PUSH",
+      message: "",
+      signalAt: t,
+      signalConfirmedAt: 0,
+      signalExpiresAt: t + 120000,
       phase: qual,
     });
   }
