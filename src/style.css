@@ -155,6 +155,7 @@ button.subtle {
 }
 .stat,
 .panel {
+  min-width: 0;
   border: 1px solid #26394f;
   background: #111f32;
   border-radius: 16px;
@@ -185,10 +186,11 @@ button.subtle {
 }
 .columns {
   display: grid;
-  grid-template-columns: 1.18fr 1fr;
+  grid-template-columns: minmax(0, 1.18fr) minmax(0, 1fr);
   gap: 20px;
 }
 .stack {
+  min-width: 0;
   display: flex;
   flex-direction: column;
   gap: 20px;
@@ -744,7 +746,7 @@ footer {
     grid-template-columns: repeat(2, 1fr);
   }
   .columns {
-    grid-template-columns: 1fr;
+    grid-template-columns: minmax(0, 1fr);
   }
   .dashboard {
     padding: 20px 14px;
@@ -782,6 +784,9 @@ footer {
   }
   .stat > span {
     font-size: 9px;
+  }
+  .driver-buttons {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
   }
   .heading {
     align-items: flex-start;
