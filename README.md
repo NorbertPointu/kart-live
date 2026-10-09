@@ -36,6 +36,8 @@ VITE_FIREBASE_APP_ID=...
 VITE_EVENT_ID=lille-endurance-2026
 ```
 
+`npm run dev` et `npm run demo` utilisent cette configuration et partagent le même événement Firestore que l'application publiée. Les modifications locales peuvent donc affecter la course en direct. Pour travailler sans Firebase, utiliser `npm run demo:offline`.
+
 Les variables `VITE_*` sont intégrées au bundle client : ce ne sont pas des secrets. La sécurité repose sur Authentication et les règles Firestore. Ne pas versionner `.env.local`.
 
 ## 4. Installer Firebase CLI et associer le projet

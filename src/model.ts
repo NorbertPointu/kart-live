@@ -95,9 +95,10 @@ export type EventState = {
 export function currentPhase(
   state: Pick<
     EventState,
-    "phase" | "startAt" | "qualificationStartAt" | "qualificationFinishAt"
+    "phase" | "startAt" | "finishAt" | "qualificationStartAt" | "qualificationFinishAt"
   >,
 ): Phase {
+  if (state.finishAt !== null) return "qualifying";
   if (state.startAt !== null) return "race";
   if (state.qualificationStartAt !== null)
     return state.qualificationFinishAt === null ? "qualifying" : "race";

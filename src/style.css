@@ -160,6 +160,17 @@ button.subtle {
   grid-column: 1 / -1;
   margin: 0;
 }
+.pilot-command-title {
+  display: grid;
+  gap: 3px;
+}
+.pilot-command-title strong {
+  color: #82aaff;
+  font-size: 22px;
+  font-weight: 800;
+  line-height: 1.2;
+  overflow-wrap: anywhere;
+}
 .message-toggle {
   grid-column: 1 / -1;
   justify-self: start;
@@ -336,6 +347,88 @@ button.subtle {
 .done {
   background: #175b46;
   border-color: #218465;
+}
+.relay-live-timeline {
+  display: grid;
+  gap: 0;
+  margin-top: 12px;
+}
+.relay-live-step {
+  position: relative;
+  display: grid;
+  grid-template-columns: 14px minmax(0, 1fr);
+  gap: 12px;
+  min-height: 78px;
+  padding: 3px 2px 18px;
+  --driver-color: #f5c84b;
+}
+.relay-live-step:not(:last-child)::after {
+  position: absolute;
+  top: 17px;
+  bottom: 0;
+  left: 7px;
+  width: 2px;
+  background: #35465d;
+  content: "";
+}
+.relay-live-marker {
+  z-index: 1;
+  width: 14px;
+  height: 14px;
+  border: 3px solid #111f32;
+  border-radius: 50%;
+  background: var(--driver-color);
+  box-shadow: 0 0 0 1px var(--driver-color);
+}
+.relay-live-step > div {
+  display: grid;
+  align-content: start;
+  gap: 3px;
+  min-width: 0;
+}
+.relay-live-step small {
+  color: #91a2ba;
+  font-size: 10px;
+  font-weight: 800;
+}
+.relay-live-step strong {
+  color: var(--driver-color);
+  font-size: 20px;
+  overflow-wrap: anywhere;
+}
+.relay-live-step div > span {
+  color: #91a2ba;
+  font-size: 11px;
+}
+.relay-live-fuel {
+  display: grid;
+  grid-template-columns: 18px minmax(0, 1fr);
+  align-items: start;
+  gap: 8px;
+  margin: 0 0 14px 26px;
+  padding: 10px;
+  border-left: 3px solid #e5984a;
+  border-radius: 4px;
+  background: #302719;
+  color: #ffca83;
+}
+.relay-live-fuel > div {
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+}
+.relay-live-fuel strong {
+  overflow-wrap: anywhere;
+}
+.relay-live-fuel small {
+  color: #e8c898;
+  font-size: 11px;
+}
+.relay-change-button,
+.relay-pit-button {
+  justify-self: start;
+  min-height: 40px;
+  margin: 0 0 16px 26px;
 }
 .driver-buttons {
   display: grid;
@@ -1199,12 +1292,11 @@ footer {
   .stats {
     gap: 8px;
   }
-  .stats .stat-current { order: 1; }
+  .stats .stat-next { order: 1; }
   .stats .stat-remaining { order: 2; }
   .stats .pilot-command-panel { order: 3; }
-  .stats .stat-next { order: 4; }
-  .stats .stat-changes { order: 5; }
-  .stats .stat-fuel { order: 6; }
+  .stats .stat-changes { order: 4; }
+  .stats .stat-fuel { order: 5; }
   .stats .pilot-command-panel,
   .stats .stat-fuel {
     grid-column: 1 / -1;

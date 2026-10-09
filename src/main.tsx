@@ -51,7 +51,11 @@ import {
 
 import { ConfigPanel } from "./ConfigPanel";
 import { StrategyPanel } from "./StrategyPanel";
-import { nextPlannedDriverAt, plannedDriverAt } from "./strategy";
+import {
+  buildStrategyTimeline,
+  nextPlannedDriverAt,
+  plannedDriverAt,
+} from "./strategy";
 import { FirebaseError } from "firebase/app";
 import { createRoot } from "react-dom/client";
 const ADMIN_UID = "k080KWL0WJTnbHzEJARVLfdzKWo1";
@@ -78,7 +82,6 @@ function App() {
   const [admin, setAdmin] = useState(false);
   const [confirmReset, setConfirmReset] = useState(false);
   const [confirmFinishRace, setConfirmFinishRace] = useState(false);
-  const [confirmNewQualification, setConfirmNewQualification] = useState(false);
   const [tab, setTab] = useState<"race" | "strategy" | "config">("race");
   useEffect(() => {
     const id = setInterval(() => setNow(Date.now()), 250);
@@ -138,10 +141,10 @@ function App() {
       () => setOnline(false),
     );
   }, [user]);
-  async function save(next: EventState, type = "state_updated") {
+  async function save(next: EventState, type = "state_updated"): Promise<boolean> {
     if (configured && !admin) {
       setError("Connexion administrateur requise pour modifier la course.");
-      return;
+      return false;
     }
     const updated = { ...next, updatedAt: Date.now() };
     const entry = {
@@ -161,12 +164,14 @@ function App() {
         });
         batch.set(doc(collection(db!, "events", eventId, "history")), entry);
         await batch.commit();
+        return true;
       } catch (e) {
         setError(
           e instanceof FirebaseError && e.code === "permission-denied"
             ? "Enregistrement refusé par Firestore. Vérifier le projet Firebase et publier les règles avec firebase deploy --only firestore:rules. Les écritures dans events, races et history doivent toutes être autorisées."
             : `Enregistrement impossible : ${String(e)}`,
         );
+          return false;
       }
     } else {
       setState(updated);
@@ -175,6 +180,7 @@ function App() {
       history.push(entry);
       localStorage.setItem(HISTORY_KEY, JSON.stringify(history));
       channel?.postMessage(updated);
+      return true;
     }
   }
   const activeMs =
@@ -230,6 +236,11 @@ function App() {
       : state.strategy.durationMinutes) * 60_000;
   const remainingTime = Math.max(0, phaseDuration - phaseElapsed);
   const raceInProgress = state.startAt !== null && state.finishAt === null;
+  const completedRaceRelays = state.segments.filter((segment) => segment.phase === "race").length;
+  const lastRaceDriver = state.segments
+    .slice()
+    .reverse()
+    .find((segment) => segment.phase === "race")?.driver ?? null;
   const plannedDriver =
     state.finishAt === null
       ? plannedDriverAt(
@@ -240,15 +251,69 @@ function App() {
           state.startAt,
         )
       : null;
-  const currentDriver = plannedDriver ?? state.activeDriver;
-  const nextDriver = nextPlannedDriverAt(
+    const currentDriver = phase === "race"
+      ? state.activeDriver ?? (state.pitSince !== null ? lastRaceDriver ?? plannedDriver : plannedDriver)
+      : plannedDriver ?? state.activeDriver;
+    const nextDriver = phase === "race" && state.strategy.relays.length &&
+      (state.activeDriver !== null || state.pitSince !== null)
+      ? state.strategy.relays[completedRaceRelays + (state.activeDriver ? 1 : 0)]?.driver ?? null
+      : nextPlannedDriverAt(
+          state.strategy,
+          phase,
+          now,
+          state.qualificationStartAt,
+          state.startAt,
+        );
+  const raceTimeline = buildStrategyTimeline(
     state.strategy,
-    phase,
-    now,
-    state.qualificationStartAt,
-    state.startAt,
+    state.startAt ?? state.strategy.scheduledStartAt,
   );
-  function start(driver: Driver) {
+  const firstRelayIndex = raceTimeline.findIndex((item) => item.kind === "relay");
+  const activeTimelineIndex = state.startAt === null
+    ? -1
+    : raceTimeline.findIndex((item) => now >= item.startAt && now < item.endAt);
+  const previousRelayIndices = raceTimeline
+    .map((item, index) => item.kind === "relay" && index < activeTimelineIndex ? index : -1)
+    .filter((index) => index >= 0);
+  const actualRelayPosition = phase === "race" && state.activeDriver !== null
+    ? completedRaceRelays
+    : phase === "race" && state.pitSince !== null
+      ? Math.max(0, completedRaceRelays - 1)
+      : null;
+  const actualRelayId = actualRelayPosition === null
+    ? null
+    : state.strategy.relays[actualRelayPosition]?.id;
+  const currentRelayIndex = actualRelayId
+    ? raceTimeline.findIndex((item) => item.kind === "relay" && item.relay.id === actualRelayId)
+    : activeTimelineIndex >= 0
+      ? raceTimeline[activeTimelineIndex].kind === "relay"
+        ? activeTimelineIndex
+        : previousRelayIndices[previousRelayIndices.length - 1] ?? firstRelayIndex
+      : firstRelayIndex;
+  const currentRelayNumber = Math.max(
+    1,
+    completedRaceRelays + (state.activeDriver ? 1 : 0),
+  );
+  const nextRelayNumber = currentRelayNumber + 1;
+  const nextRelayIndex = raceTimeline.findIndex(
+    (item, index) => index > currentRelayIndex && item.kind === "relay",
+  );
+  const plannedPitBeforeNext = raceTimeline.find(
+    (item, index) =>
+      item.kind === "pit" &&
+      index > currentRelayIndex &&
+      (nextRelayIndex < 0 || index < nextRelayIndex) &&
+      (state.startAt === null || item.endAt > now),
+  );
+  const plannedPitAfterNext = nextRelayIndex < 0
+    ? undefined
+    : raceTimeline.find(
+        (item, index) =>
+          item.kind === "pit" &&
+          index >= nextRelayIndex &&
+          (state.startAt === null || item.endAt > now),
+      );
+  function start(driver: Driver, eventType = "relay_started") {
     const t = Date.now();
     const closed = closeSegment(state, t);
     void save({
@@ -262,7 +327,13 @@ function App() {
       signalConfirmedAt: 0,
       signalExpiresAt: t + 120000,
       phase,
-    }, "relay_started");
+    }, eventType);
+  }
+  function completeStrategicChange() {
+    const isChange = Boolean(state.activeDriver || state.pitSince !== null);
+    const driverToStart = isChange ? nextDriver : currentDriver ?? nextDriver;
+    if (driverToStart)
+      start(driverToStart, isChange ? "driver_change_completed" : "relay_started");
   }
   function pit() {
     const t = Date.now();
@@ -392,18 +463,9 @@ function App() {
       qualificationFinishAt: t,
     }, "qualification_finished");
   }
-  function finishRace() {
-    const t = Date.now();
-    setConfirmFinishRace(false);
-    void save(
-      { ...closeSegment(state, t), finishAt: t, pitSince: t },
-      "race_finished",
-    );
-  }
-  function prepareNewQualification() {
-    setConfirmNewQualification(false);
-    void save({
-      ...state,
+  function createNewQualification(source: EventState): EventState {
+    return {
+      ...source,
       raceId: newId(),
       signal: "READY",
       message: "",
@@ -422,13 +484,25 @@ function App() {
       qualificationStartAt: null,
       qualificationFinishAt: null,
       strategy: {
-        ...state.strategy,
+        ...source.strategy,
         qualifyingDone: [],
-        fuelWindows: state.strategy.fuelWindows.map((window) => ({
+        fuelWindows: source.strategy.fuelWindows.map((window) => ({
           ...window,
           status: window.plannedAt === null ? "unplanned" : "planned",
         })),
       },
+    };
+  }
+  async function finishRace() {
+    const t = Date.now();
+    const finished = { ...closeSegment(state, t), finishAt: t, pitSince: t };
+    if (!(await save(finished, "race_finished"))) return;
+    setConfirmFinishRace(false);
+    await save(createNewQualification(finished), "race_reset");
+  }
+  function prepareNewQualification() {
+    void save({
+      ...createNewQualification(state),
     }, "race_reset");
   }
   function goRole(r: "stand" | "driver") {
@@ -633,7 +707,9 @@ function App() {
               ready={Boolean(user)}
               activeDriver={state.activeDriver}
               setError={setError}
-              onApply={(config) => save({ ...state, config }, "configuration_updated")}
+              onApply={async (config) => {
+                await save({ ...state, config }, "configuration_updated");
+              }}
             />
           ) : tab === "strategy" ? (
             <StrategyPanel
@@ -641,7 +717,9 @@ function App() {
               drivers={team}
               canEdit={canEdit}
               onError={setError}
-              onApply={(strategy) => save({ ...state, strategy }, "strategy_updated")}
+              onApply={async (strategy) => {
+                await save({ ...state, strategy }, "strategy_updated");
+              }}
             />
           ) : (
           <>
@@ -668,8 +746,12 @@ function App() {
               {phase === "qualifying" ? (
                 <button
                   className={state.qualificationStartAt && !state.qualificationFinishAt ? "outline" : "primary"}
-                  disabled={!canEdit || (!state.qualificationStartAt && (Boolean(state.activeDriver) || Boolean(state.startAt && !state.finishAt))) || Boolean(state.qualificationFinishAt)}
-                  onClick={state.qualificationStartAt && !state.qualificationFinishAt ? finishQualification : startQualification}
+                  disabled={!canEdit || (!state.qualificationStartAt && !state.finishAt && (Boolean(state.activeDriver) || Boolean(state.startAt && !state.finishAt))) || Boolean(state.qualificationFinishAt && !state.finishAt)}
+                  onClick={state.finishAt
+                    ? prepareNewQualification
+                    : state.qualificationStartAt && !state.qualificationFinishAt
+                      ? finishQualification
+                      : startQualification}
                 >
                   {state.qualificationStartAt && !state.qualificationFinishAt ? <Flag size={16} /> : <Play size={16} />}
                   {state.qualificationStartAt && !state.qualificationFinishAt ? "Fin Qualification" : "Départ Qualification"}
@@ -678,14 +760,10 @@ function App() {
                 <button
                   className={state.startAt && !state.finishAt ? "outline" : "primary"}
                   disabled={!canEdit || (!state.qualificationFinishAt && !raceInProgress && state.phase !== "race")}
-                  onClick={state.finishAt
-                    ? () => setConfirmNewQualification(true)
-                    : state.startAt
-                      ? () => setConfirmFinishRace(true)
-                      : startRace}
+                  onClick={state.startAt ? () => setConfirmFinishRace(true) : startRace}
                 >
-                  {state.finishAt ? <RotateCcw size={16} /> : state.startAt ? <Flag size={16} /> : <Play size={16} />}
-                  {state.startAt && !state.finishAt ? "Fin Course" : state.finishAt ? "Course terminée" : "Départ Course"}
+                  {state.startAt ? <Flag size={16} /> : <Play size={16} />}
+                  {state.startAt ? "Fin Course" : "Départ Course"}
                 </button>
               )}
             </div>
@@ -700,35 +778,14 @@ function App() {
                 </button>
               </div>
             )}
-            {confirmNewQualification && (
-              <div className="phase-confirm" role="alertdialog" aria-label="Nouvelle qualification">
-                <p>La course terminée restera dans l’historique. Préparer une nouvelle qualification ?</p>
-                <button className="outline" onClick={() => setConfirmNewQualification(false)}>
-                  Annuler
-                </button>
-                <button className="primary" onClick={prepareNewQualification}>
-                  <RotateCcw size={16} /> Nouvelle qualification
-                </button>
-              </div>
-            )}
           </section>
           <section className={`stats${phase === "qualifying" ? " stats-qualifying" : ""}`}>
-            <article className="stat stat-current">
+            <article className="stat stat-next">
               <span>
-                <Users size={17} /> PILOTE ACTUEL
+                <Users size={17} /> PROCHAIN PILOTE
               </span>
-              <strong>{driverName(state, currentDriver) || "—"}</strong>
-              <small>
-                {plannedDriver
-                  ? state.activeDriver === plannedDriver
-                    ? `Selon la stratégie · ${format(activeMs)} en piste`
-                    : "Selon la stratégie"
-                  : state.activeDriver
-                  ? `Roulage : ${format(activeMs)}`
-                  : state.pitSince
-                    ? "Kart aux stands"
-                    : "Aucun pilote actif"}
-              </small>
+              <strong>{driverName(state, nextDriver) || "—"}</strong>
+              <small>{nextDriver ? "Selon la stratégie" : "Aucun passage suivant"}</small>
             </article>
               <article className="stat stat-remaining">
                 <span>
@@ -739,16 +796,12 @@ function App() {
               </article>
               <article className="panel pilot-command-panel">
                 <div className="panel-title">
-                  <h2>
-                    <Radio size={19} /> Consignes au pilote
-                  </h2>
-                  <span className="pill active-signal">
-                    {effectiveSignal === "READY"
-                      ? phase === "race" && state.startAt === null && state.finishAt === null
-                        ? "PRÊT POUR LE DÉPART"
-                        : "AUCUNE CONSIGNE"
-                      : `MESSAGE ACTIF : ${effectiveSignal === "MESSAGE" ? state.message : signalDescription[effectiveSignal]}`}
-                  </span>
+                  <div className="pilot-command-title">
+                    <h2>
+                      <Radio size={19} /> Consignes au pilote
+                    </h2>
+                    <strong>{driverName(state, currentDriver) || "—"}</strong>
+                  </div>
                 </div>
                 <div className="commands">
                   <button
@@ -798,13 +851,6 @@ function App() {
                   </div>
                 )}
               </article>
-            <article className="stat stat-next">
-              <span>
-                <Users size={17} /> PROCHAIN PILOTE
-              </span>
-              <strong>{driverName(state, nextDriver) || "—"}</strong>
-              <small>{nextDriver ? "Selon la stratégie" : "Aucun passage suivant"}</small>
-            </article>
             <article className="stat stat-changes">
               <span>
                 <RotateCcw size={17} /> CHANGEMENTS
@@ -839,33 +885,89 @@ function App() {
                     <Play size={19} /> Gestion des relais
                   </h2>
                 </div>
-                <div className="driver-buttons">
-                  {team.map((d) => (
-                    <button
-                      key={d.id}
-                      disabled={!canEdit || Boolean(state.activeDriver)}
-                      onClick={() => start(d.id)}
-                      className="driver-btn"
+                {phase === "race" && state.strategy.relays.length ? (
+                  <div className="relay-live-timeline" aria-label="Relais prévus selon la stratégie">
+                    <article
+                      className="relay-live-step relay-live-current"
+                      style={{ "--driver-color": team.find((driver) => driver.id === currentDriver)?.color ?? "#f5c84b" } as React.CSSProperties}
                     >
-                      <strong>{d.name}</strong>
-                      <small>Début relais</small>
+                      <span className="relay-live-marker" />
+                      <div>
+                        <small>PILOTE ACTUEL · RELAIS {currentRelayNumber}</small>
+                        <strong>{driverName(state, currentDriver) || "—"}</strong>
+                        <span>{state.activeDriver === currentDriver ? "En piste" : state.pitSince !== null ? "Kart aux stands" : "Selon la stratégie"}</span>
+                      </div>
+                    </article>
+                    {plannedPitBeforeNext?.kind === "pit" && (
+                      <article className="relay-live-fuel">
+                        <Fuel size={17} />
+                        <div>
+                          <strong>{plannedPitBeforeNext.window.label}</strong>
+                          <small>Ravitaillement obligatoire · {clock(plannedPitBeforeNext.window.plannedAt ?? plannedPitBeforeNext.startAt)}</small>
+                        </div>
+                      </article>
+                    )}
+                    <button
+                      className="outline relay-change-button"
+                      disabled={!canEdit || !(currentDriver || nextDriver)}
+                      onClick={completeStrategicChange}
+                    >
+                      <RotateCcw size={16} />
+                      {state.activeDriver || state.pitSince !== null ? "Changement effectué" : "Démarrer le relais prévu"}
                     </button>
-                  ))}
-                </div>
-                <div className="action-row">
-                  <button
-                    disabled={!canEdit || !state.activeDriver}
-                    className="outline"
-                    onClick={pit}
-                  >
-                    <Pause size={17} /> Entrée au stand / fin du relais
-                  </button>
-                </div>
-                <p className="muted tiny">
-                  À l'entrée au stand, arrête le relais. Démarre le suivant à la
-                  sortie du stand : l'immobilisation n'est pas comptée comme
-                  roulage.
-                </p>
+                    <article
+                      className="relay-live-step relay-live-next"
+                      style={{ "--driver-color": team.find((driver) => driver.id === nextDriver)?.color ?? "#47c7b4" } as React.CSSProperties}
+                    >
+                      <span className="relay-live-marker" />
+                      <div>
+                        <small>PILOTE SUIVANT · RELAIS {nextRelayNumber}</small>
+                        <strong>{driverName(state, nextDriver) || "—"}</strong>
+                        <span>{nextDriver ? "Selon la stratégie" : "Aucun relais suivant"}</span>
+                      </div>
+                    </article>
+                    {!plannedPitBeforeNext && plannedPitAfterNext?.kind === "pit" && (
+                      <article className="relay-live-fuel relay-live-fuel-later">
+                        <Fuel size={17} />
+                        <div>
+                          <strong>{plannedPitAfterNext.window.label}</strong>
+                          <small>Ravitaillement obligatoire · {clock(plannedPitAfterNext.window.plannedAt ?? plannedPitAfterNext.startAt)}</small>
+                        </div>
+                      </article>
+                    )}
+                    {state.activeDriver && (
+                      <button className="outline relay-pit-button" disabled={!canEdit} onClick={pit}>
+                        <Pause size={16} /> Entrée au stand
+                      </button>
+                    )}
+                  </div>
+                ) : (
+                  <>
+                    {phase === "race" && <p className="muted tiny">Aucun relais généré dans la stratégie. Choisissez un pilote manuellement ou générez le planning dans l’onglet Stratégie.</p>}
+                    <div className="driver-buttons">
+                      {team.map((d) => (
+                        <button
+                          key={d.id}
+                          disabled={!canEdit || Boolean(state.activeDriver)}
+                          onClick={() => start(d.id)}
+                          className="driver-btn"
+                        >
+                          <strong>{d.name}</strong>
+                          <small>Début relais</small>
+                        </button>
+                      ))}
+                    </div>
+                    <div className="action-row">
+                      <button
+                        disabled={!canEdit || !state.activeDriver}
+                        className="outline"
+                        onClick={pit}
+                      >
+                        <Pause size={17} /> Entrée au stand / fin du relais
+                      </button>
+                    </div>
+                  </>
+                )}
               </article>
             </div>
             <div className="stack">

@@ -41,6 +41,7 @@ test("resolves an active race even when qualification finish status is missing",
     currentPhase({
       phase: "qualifying",
       startAt: 1_000,
+      finishAt: null,
       qualificationStartAt: null,
       qualificationFinishAt: null,
     }),
@@ -50,8 +51,19 @@ test("resolves an active race even when qualification finish status is missing",
     currentPhase({
       phase: "race",
       startAt: null,
+      finishAt: null,
       qualificationStartAt: 500,
       qualificationFinishAt: null,
+    }),
+    "qualifying",
+  );
+  assert.equal(
+    currentPhase({
+      phase: "race",
+      startAt: 1_000,
+      finishAt: 2_000,
+      qualificationStartAt: null,
+      qualificationFinishAt: 1_000,
     }),
     "qualifying",
   );
@@ -138,4 +150,20 @@ test("selects the next strategy pilot for qualification and race", () => {
   const strategy = sampleStrategy({ qualifyingKarts: 2 });
   assert.equal(nextPlannedDriverAt(strategy, "qualifying", 5 * 60_000, 0, null), "c");
   assert.equal(nextPlannedDriverAt(strategy, "race", 35 * 60_000, null, 0), "c");
+});
+
+test("keeps the planned current driver through a pit stop and selects the following relay", () => {
+  const strategy = sampleStrategy({
+    fuelWindows: [
+      { id: "f", label: "Fuel", opensAt: 15 * 60_000, closesAt: 25 * 60_000, plannedAt: 20 * 60_000, stopMinutes: 5, status: "planned" },
+    ],
+  });
+  assert.equal(plannedDriverAt(strategy, "race", 32 * 60_000, null, 0), "a");
+  assert.equal(nextPlannedDriverAt(strategy, "race", 32 * 60_000, null, 0), "b");
+});
+
+test("shows distinct first and next race drivers before the start", () => {
+  const strategy = sampleStrategy();
+  assert.equal(plannedDriverAt(strategy, "race", 0, null, null), "a");
+  assert.equal(nextPlannedDriverAt(strategy, "race", 0, null, null), "b");
 });

@@ -254,10 +254,19 @@ export function plannedDriverAt(
 
   const firstRelay = strategy.relays[0]?.driver ?? null;
   if (raceStartAt === null || now < raceStartAt) return firstRelay;
-  const currentItem = buildStrategyTimeline(strategy, raceStartAt).find(
-    (item) => item.kind === "relay" && now >= item.startAt && now < item.endAt,
+  const timeline = buildStrategyTimeline(strategy, raceStartAt);
+  const currentIndex = timeline.findIndex(
+    (item) => now >= item.startAt && now < item.endAt,
   );
-  return currentItem?.kind === "relay" ? currentItem.relay.driver : null;
+  if (currentIndex < 0) return null;
+  const currentItem = timeline[currentIndex];
+  if (currentItem.kind === "relay") return currentItem.relay.driver;
+  return (
+    timeline
+      .slice(0, currentIndex)
+      .reverse()
+      .find((item) => item.kind === "relay")?.relay.driver ?? null
+  );
 }
 
 export function nextPlannedDriverAt(
@@ -296,15 +305,26 @@ export function nextPlannedDriverAt(
     );
   }
 
-  const relays = buildStrategyTimeline(
+  const timeline = buildStrategyTimeline(
     strategy,
     raceStartAt ?? strategy.scheduledStartAt,
-  ).filter((item) => item.kind === "relay");
-  return (
-    relays.find((item) => item.startAt > now)?.relay.driver ??
-    (raceStartAt === null ? relays[0]?.relay.driver : null) ??
-    null
   );
+  const plannedRelays = timeline.filter(
+    (item): item is Extract<StrategyTimelineItem, { kind: "relay" }> =>
+      item.kind === "relay",
+  );
+  if (raceStartAt === null || now < raceStartAt)
+    return plannedRelays[1]?.relay.driver ?? null;
+
+  const currentIndex = timeline.findIndex(
+    (item) => now >= item.startAt && now < item.endAt,
+  );
+  const upcomingRelay = timeline
+    .slice(currentIndex + 1)
+    .find((item) => item.kind === "relay");
+  if (upcomingRelay?.kind === "relay") return upcomingRelay.relay.driver;
+  if (currentIndex >= 0) return null;
+  return plannedRelays.find((item) => item.startAt > now)?.relay.driver ?? null;
 }
 
 export function pitWindowAt(window: PitWindow, at: number): PitWindow {
