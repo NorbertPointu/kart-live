@@ -35,6 +35,7 @@ export type Segment = {
   end: number;
 };
 export type EventState = {
+  raceId: string;
   signal: Signal;
   message: string;
   signalAt: number;
@@ -98,6 +99,7 @@ export function parseLap(text: string): number | null {
   return ms > 0 ? ms : null;
 }
 export const initial: EventState = {
+  raceId: newId(),
   signal: "READY",
   message: "",
   signalAt: 0,

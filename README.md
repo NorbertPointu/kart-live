@@ -13,7 +13,7 @@ Application React + TypeScript + Vite, avec Firestore pour les messages temps r�
 1. **Authentication > Sign-in method** : activer **E-mail/Mot de passe** et **Anonyme**.
 2. **Authentication > Users** : créer le compte de l'administrateur du stand et copier son **UID**.
 3. **Firestore Database** : créer la base `(default)` en mode production, dans une région appropriée.
-4. Ouvrir `firestore.rules` et remplacer `REPLACE_WITH_ADMIN_UID` par l'UID exact du compte administrateur.
+4. Vérifier que l'UID du compte administrateur est `k080KWL0WJTnbHzEJARVLfdzKWo1`. Si le compte est différent, remplacer cet UID dans `firestore.rules` et la constante `ADMIN_UID` dans `src/main.tsx`, puis recompiler l'application et publier les règles.
 
 Les règles du projet autorisent la lecture aux utilisateurs authentifiés (y compris anonymes) et l'écriture uniquement au compte administrateur. Ne jamais déployer avec des règles ouvertes (`allow write: if true`). Ne pas enregistrer de données sensibles dans l'événement.
 
@@ -100,5 +100,6 @@ Redéployer `firestore:rules` si les règles changent. La publication des règle
 
 - **Page blanche sur `/driver`** : vérifier le `rewrites` SPA de `firebase.json`, puis redéployer Hosting.
 - **`permission-denied` Firestore** : vérifier UID administrateur, règles publiées, Authentication activé et bon projet.
+- **Tous les enregistrements sont refusés malgré le bon compte** : publier les règles actuelles avec `firebase deploy --only firestore:rules --project TON-PROJET`. Chaque action enregistre simultanément `events/{eventId}`, `events/{eventId}/races/{raceId}` et `events/{eventId}/history/{historyId}`. Firestore refuse tout le lot si un seul de ces chemins n'est pas autorisé ; les règles du document parent ne couvrent pas automatiquement les sous-collections.
 - **Données non synchronisées** : vérifier `.env.local`, `VITE_EVENT_ID`, accès réseau et connexion Firebase des deux appareils.
 - **Ancienne version visible** : recompiler avec `npm run build` avant `firebase deploy`.

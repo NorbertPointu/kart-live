@@ -677,6 +677,19 @@ footer {
 .signal-READY {
   color: #c2d2e8;
 }
+.signal-READY.signal-start {
+  color: #fff;
+  background: #2d62c5;
+  border-color: #8db6ff;
+}
+.signal-finished {
+  color: #000;
+  background-color: #fff;
+  background-image: repeating-conic-gradient(#fff 0% 25%, #111 0% 50%);
+  background-size: 48px 48px;
+  border-color: #fff;
+  text-shadow: -2px -2px #fff, 2px -2px #fff, -2px 2px #fff, 2px 2px #fff;
+}
 .signal-MESSAGE {
   color: #fff;
 }

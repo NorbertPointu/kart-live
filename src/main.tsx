@@ -1,5 +1,6 @@
 import React, { useEffect, useState } from "react";
 import { createRoot } from "react-dom/client";
+import { FirebaseError } from "firebase/app";
 import {
   onAuthStateChanged,
   signInAnonymously,
@@ -7,7 +8,12 @@ import {
   signOut,
   User,
 } from "firebase/auth";
-import { doc, onSnapshot, setDoc, updateDoc } from "firebase/firestore";
+import {
+  collection,
+  doc,
+  onSnapshot,
+  writeBatch,
+} from "firebase/firestore";
 import { auth, configured, db, eventId } from "./firebase";
 import {
   clock,
@@ -17,6 +23,7 @@ import {
   format,
   formatLap,
   initial,
+  newId,
   normalize,
   Signal,
   totals,
@@ -42,7 +49,9 @@ import {
   Settings,
 } from "lucide-react";
 import "./style.css";
+const ADMIN_UID = "k080KWL0WJTnbHzEJARVLfdzKWo1";
 const KEY = "kart-live-demo-v1";
+const HISTORY_KEY = `${KEY}-history`;
 const channel =
   typeof BroadcastChannel !== "undefined" ? new BroadcastChannel(KEY) : null;
 function App() {
@@ -87,7 +96,10 @@ function App() {
     }
     const unsub = onAuthStateChanged(auth!, async (u) => {
       setUser(u);
-      setAdmin(Boolean(u && !u.isAnonymous));
+      setAdmin(Boolean(u && !u.isAnonymous && u.uid === ADMIN_UID));
+      if (u && !u.isAnonymous && u.uid !== ADMIN_UID) {
+        setError(`Ce compte n'est pas administrateur. UID connecté : ${u.uid}. Vérifier l'UID autorisé dans l'application et les règles Firestore.`);
+      }
       if (!u && location.pathname.startsWith("/driver"))
         try {
           await signInAnonymously(auth!);
@@ -110,21 +122,42 @@ function App() {
       () => setOnline(false),
     );
   }, [user]);
-  async function save(next: EventState) {
+  async function save(next: EventState, type = "state_updated") {
     if (configured && !admin) {
       setError("Connexion administrateur requise pour modifier la course.");
       return;
     }
     const updated = { ...next, updatedAt: Date.now() };
+    const entry = {
+      id: newId(),
+      type,
+      at: updated.updatedAt,
+      raceId: updated.raceId,
+      state: updated,
+    };
     if (configured) {
       try {
-        await setDoc(doc(db!, "events", eventId), updated);
+        const batch = writeBatch(db!);
+        batch.set(doc(db!, "events", eventId), updated);
+        batch.set(doc(db!, "events", eventId, "races", updated.raceId), {
+          ...updated,
+          status: updated.finishAt === null ? "active" : "finished",
+        });
+        batch.set(doc(collection(db!, "events", eventId, "history")), entry);
+        await batch.commit();
       } catch (e) {
-        setError(`Enregistrement impossible : ${String(e)}`);
+        setError(
+          e instanceof FirebaseError && e.code === "permission-denied"
+            ? "Enregistrement refusé par Firestore. Vérifier le projet Firebase et publier les règles avec firebase deploy --only firestore:rules. Les écritures dans events, races et history doivent toutes être autorisées."
+            : `Enregistrement impossible : ${String(e)}`,
+        );
       }
     } else {
       setState(updated);
       localStorage.setItem(KEY, JSON.stringify(updated));
+      const history = JSON.parse(localStorage.getItem(HISTORY_KEY) || "[]");
+      history.push(entry);
+      localStorage.setItem(HISTORY_KEY, JSON.stringify(history));
       channel?.postMessage(updated);
     }
   }
@@ -159,8 +192,8 @@ function App() {
     READY: "EN ATTENTE DES CONSIGNES",
     BOX: "BOX",
     PUSH: "GO",
-    "STAY OUT": "EN ATTENTE",
-    SLOW: "EN ATTENTE",
+    "STAY OUT": "DANS LES STANDS",
+    SLOW: "DANS LES STANDS",
     CLEAR: "PISTE LIBRE",
     MESSAGE: "MESSAGE DU STAND",
   };
@@ -179,12 +212,15 @@ function App() {
       signalConfirmedAt: 0,
       signalExpiresAt: t + 120000,
       phase: qual,
-    });
+    }, "relay_started");
   }
   function pit() {
     const t = Date.now();
     const closed = closeSegment(state, t);
-    void save({ ...closed, pitSince: t, signal: "READY", signalExpiresAt: 0 });
+    void save(
+      { ...closed, pitSince: t, signal: "READY", signalExpiresAt: 0 },
+      "relay_ended",
+    );
   }
   function send(signal: Signal) {
     const t = Date.now();
@@ -195,7 +231,7 @@ function App() {
       signalAt: t,
       signalConfirmedAt: 0,
       signalExpiresAt: t + 120000,
-    });
+    }, `signal_${signal.toLowerCase().replace(" ", "_")}`);
   }
   function sendCustomMessage() {
     const text = message.trim().slice(0, 80);
@@ -208,7 +244,7 @@ function App() {
       signalAt: t,
       signalConfirmedAt: 0,
       signalExpiresAt: t + 20000,
-    });
+    }, "custom_message_sent");
     setMessage("");
   }
   async function acknowledgeBox() {
@@ -216,20 +252,63 @@ function App() {
     const confirmedAt = state.signalAt;
     const updatedAt = Date.now();
     const updated = { ...state, signalConfirmedAt: confirmedAt, updatedAt };
+    const entry = {
+      id: newId(),
+      type: "box_acknowledged",
+      at: updatedAt,
+      raceId: state.raceId,
+      state: updated,
+    };
     setState(updated);
     if (configured) {
       try {
-        await updateDoc(doc(db!, "events", eventId), {
+        const batch = writeBatch(db!);
+        batch.update(doc(db!, "events", eventId), {
           signalConfirmedAt: confirmedAt,
           updatedAt,
         });
+        batch.set(doc(collection(db!, "events", eventId, "history")), entry);
+        await batch.commit();
       } catch (e) {
         setError(`Confirmation impossible : ${String(e)}`);
       }
     } else {
       localStorage.setItem(KEY, JSON.stringify(updated));
+      const history = JSON.parse(localStorage.getItem(HISTORY_KEY) || "[]");
+      history.push(entry);
+      localStorage.setItem(HISTORY_KEY, JSON.stringify(history));
       channel?.postMessage(updated);
     }
+  }
+  function startRace() {
+    const t = Date.now();
+    const isNewRace = state.finishAt !== null;
+    const next = isNewRace
+      ? {
+          ...state,
+          raceId: newId(),
+          activeDriver: null,
+          activeSince: null,
+          segments: [],
+          pitSince: null,
+          fuel1: false,
+          fuel2: false,
+          signal: "READY" as Signal,
+          message: "",
+          signalAt: 0,
+          signalConfirmedAt: 0,
+          signalExpiresAt: 0,
+          phase: qual,
+        }
+      : state;
+    void save({ ...next, startAt: t, finishAt: null }, "race_started");
+  }
+  function finishRace() {
+    const t = Date.now();
+    void save(
+      { ...closeSegment(state, t), finishAt: t, pitSince: t },
+      "race_finished",
+    );
   }
   function goRole(r: "stand" | "driver") {
     history.pushState({}, "", r === "driver" ? "/driver" : "/");
@@ -306,10 +385,10 @@ function App() {
           </div>
           <button
             type="button"
-            className={`signal signal-${effectiveSignal.replace(" ", "-")}${effectiveSignal === "BOX" ? " signal-box-clickable" : ""}${boxAwaitingAck && effectiveSignal === "BOX" ? " signal-flashing" : ""}${boxConfirmed && effectiveSignal === "BOX" ? " signal-confirmed" : ""}`}
-            disabled={effectiveSignal !== "BOX" || !boxAwaitingAck}
+            className={`signal signal-${effectiveSignal.replace(" ", "-")}${state.finishAt !== null ? " signal-finished" : ""}${state.startAt === null && effectiveSignal === "READY" ? " signal-start" : ""}${effectiveSignal === "BOX" ? " signal-box-clickable" : ""}${boxAwaitingAck && effectiveSignal === "BOX" ? " signal-flashing" : ""}${boxConfirmed && effectiveSignal === "BOX" ? " signal-confirmed" : ""}`}
+            disabled={state.finishAt !== null || effectiveSignal !== "BOX" || !boxAwaitingAck}
             onClick={() => {
-              if (state.signal !== "BOX" || !boxAwaitingAck) return;
+              if (state.finishAt !== null || state.signal !== "BOX" || !boxAwaitingAck) return;
               void acknowledgeBox();
             }}
             aria-label={
@@ -321,11 +400,15 @@ function App() {
             }
           >
             <span className="signal-title">
-              {effectiveSignal === "MESSAGE"
-                ? state.message
-                : effectiveSignal === "READY"
-                  ? "EN ATTENTE"
-                  : signalDescription[effectiveSignal]}
+              {state.finishAt !== null
+                ? "BRAVO"
+                : effectiveSignal === "MESSAGE"
+                  ? state.message
+                  : effectiveSignal === "READY"
+                    ? state.startAt === null
+                      ? "DÉPART"
+                      : "DANS LES STANDS"
+                    : signalDescription[effectiveSignal]}
             </span>
             {effectiveSignal === "BOX" && (
               <span className="signal-ack">
@@ -423,7 +506,7 @@ function App() {
               ready={Boolean(user)}
               activeDriver={state.activeDriver}
               setError={setError}
-              onApply={(config) => save({ ...state, config })}
+              onApply={(config) => save({ ...state, config }, "configuration_updated")}
             />
           ) : (
           <>
@@ -568,26 +651,18 @@ function App() {
                     <Pause size={17} /> Entrée au stand / fin du relais
                   </button>
                   <button
-                    disabled={!canEdit || Boolean(state.startAt)}
                     className="outline"
-                    onClick={() =>
-                      save({ ...state, startAt: Date.now(), finishAt: null })
-                    }
+                    disabled={!canEdit || (Boolean(state.startAt) && !state.finishAt)}
+                    onClick={startRace}
                   >
-                    <Clock3 size={17} /> Départ course
+                    <Clock3 size={17} /> {state.finishAt ? "Nouvelle course" : "Départ course"}
                   </button>
                   <button
                     disabled={
                       !canEdit || !state.startAt || Boolean(state.finishAt)
                     }
                     className="outline"
-                    onClick={() =>
-                      save({
-                        ...closeSegment(state, Date.now()),
-                        finishAt: Date.now(),
-                        pitSince: Date.now(),
-                      })
-                    }
+                    onClick={finishRace}
                   >
                     <Flag size={17} /> Arrivée
                   </button>
@@ -651,7 +726,7 @@ function App() {
                   <button
                     disabled={!canEdit}
                     className={state.fuel1 ? "done" : "outline"}
-                    onClick={() => save({ ...state, fuel1: !state.fuel1 })}
+                    onClick={() => save({ ...state, fuel1: !state.fuel1 }, "fuel_1_toggled")}
                   >
                     {state.fuel1 ? "✓ Effectué" : "Marquer effectué"}
                   </button>
@@ -664,7 +739,7 @@ function App() {
                   <button
                     disabled={!canEdit}
                     className={state.fuel2 ? "done" : "outline"}
-                    onClick={() => save({ ...state, fuel2: !state.fuel2 })}
+                    onClick={() => save({ ...state, fuel2: !state.fuel2 }, "fuel_2_toggled")}
                   >
                     {state.fuel2 ? "✓ Effectué" : "Marquer effectué"}
                   </button>
@@ -754,7 +829,7 @@ function App() {
                         ...initial,
                         config: state.config,
                         updatedAt: Date.now(),
-                      });
+                      }, "race_reset");
                       setConfirmReset(false);
                     }}
                   >
