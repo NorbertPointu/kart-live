@@ -157,10 +157,10 @@ function App() {
       : "READY";
   const signalDescription: Record<Signal, string> = {
     READY: "EN ATTENTE DES CONSIGNES",
-    BOX: "BOX BOX",
-    PUSH: "ATTAQUE",
-    "STAY OUT": "FAIS TOI PLAIZ",
-    SLOW: "PRUDENCE",
+    BOX: "BOX",
+    PUSH: "GO",
+    "STAY OUT": "EN ATTENTE",
+    SLOW: "EN ATTENTE",
     CLEAR: "PISTE LIBRE",
     MESSAGE: "MESSAGE DU STAND",
   };
@@ -483,11 +483,6 @@ function App() {
                       ? "AUCUNE CONSIGNE"
                       : `MESSAGE ACTIF : ${effectiveSignal === "MESSAGE" ? state.message : signalDescription[effectiveSignal]}`}
                   </span>
-                  {boxConfirmed && effectiveSignal === "BOX" && (
-                    <span className="pill confirmation-tag">
-                      CONFIRMÉ PAR LE PILOTE
-                    </span>
-                  )}
                 </div>
                 <div className="commands">
                   <button
@@ -495,28 +490,19 @@ function App() {
                     className={`command boxcmd${effectiveSignal === "BOX" ? " command-active" : ""}`}
                     onClick={() => send("BOX")}
                   >
-                    BOX BOX
+                    BOX
+                    {boxConfirmed && effectiveSignal === "BOX" && (
+                      <span className="pill confirmation-tag command-confirmation">
+                        CONFIRMÉ PAR LE PILOTE
+                      </span>
+                    )}
                   </button>
                   <button
                     disabled={!canEdit}
                     className={`command pushcmd${effectiveSignal === "PUSH" ? " command-active" : ""}`}
                     onClick={() => send("PUSH")}
                   >
-                    ATTAQUE
-                  </button>
-                  <button
-                    disabled={!canEdit}
-                    className={`command staycmd${effectiveSignal === "STAY OUT" ? " command-active" : ""}`}
-                    onClick={() => send("STAY OUT")}
-                  >
-                    FAIS TOI PLAIZ
-                  </button>
-                  <button
-                    disabled={!canEdit}
-                    className={`command slowcmd${effectiveSignal === "SLOW" ? " command-active" : ""}`}
-                    onClick={() => send("SLOW")}
-                  >
-                    PRUDENCE
+                    GO
                   </button>
                 </div>
                 <div className="input-row">

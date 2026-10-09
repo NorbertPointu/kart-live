@@ -217,6 +217,8 @@ button.subtle {
   gap: 11px;
 }
 .command {
+  position: relative;
+  flex: 1;
   border: 0;
   border-radius: 12px;
   min-height: 100px;
@@ -225,13 +227,24 @@ button.subtle {
   font-size: clamp(18px, 3vw, 32px);
   font-weight: 900;
   letter-spacing: 0.02em;
+  text-align: center;
   display: flex;
   flex-direction: column;
+  align-items: center;
+  justify-content: center;
   gap: 4px;
 }
 .command-active {
-  outline: 3px solid #14202c;
+  outline: 3px solid #fff;
   outline-offset: 2px;
+}
+.command-confirmation {
+  position: absolute;
+  bottom: 9px;
+  left: 50%;
+  transform: translateX(-50%);
+  font-size: 10px;
+  white-space: nowrap;
 }
 .boxcmd {
   background: #e13e46;
@@ -612,7 +625,7 @@ footer {
 }
 .signal-BOX {
   color: #fff;
-  background: #b90012;
+  background: #e13e46;
   border-color: #ff6672;
 }
 .signal-BOX.signal-flashing {
@@ -620,25 +633,25 @@ footer {
 }
 .signal-BOX.signal-confirmed {
   color: #fff;
-  background: #ff1428;
-  border-color: #ff6672;
-  box-shadow: 0 0 32px rgb(255 20 40 / 70%);
+  background: #e13e46;
+  border-color: #fff;
+  box-shadow: 0 0 0 4px rgb(255 255 255 / 45%), 0 0 32px rgb(255 20 40 / 70%);
 }
 @keyframes box-flash {
   0%,
   12% {
-    background: #ff1428;
-    box-shadow: 0 0 32px rgb(255 20 40 / 70%);
+    border-color: #fff;
+    box-shadow: 0 0 0 4px rgb(255 255 255 / 45%), 0 0 32px rgb(255 20 40 / 70%);
   }
   13%,
   100% {
-    background: #a0000d;
+    border-color: #ff6672;
     box-shadow: none;
   }
 }
 .signal-PUSH {
   color: #fff;
-  background: #086f4e;
+  background: #1f986b;
   border-color: #48dba5;
 }
 .signal-STAY-OUT {
