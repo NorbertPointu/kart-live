@@ -7,20 +7,23 @@ import {
   signOut,
   User,
 } from "firebase/auth";
-import { doc, onSnapshot, setDoc } from "firebase/firestore";
+import { doc, onSnapshot, setDoc, updateDoc } from "firebase/firestore";
 import { auth, configured, db, eventId } from "./firebase";
 import {
   clock,
   closeSegment,
-  drivers,
+  driverName,
   EventState,
   format,
+  formatLap,
   initial,
+  normalize,
   Signal,
   totals,
   Driver,
   Phase,
 } from "./model";
+import { ConfigPanel } from "./ConfigPanel";
 import {
   Flag,
   Radio,
@@ -36,6 +39,7 @@ import {
   Pause,
   Play,
   Send,
+  Settings,
 } from "lucide-react";
 import "./style.css";
 const KEY = "kart-live-demo-v1";
@@ -56,6 +60,7 @@ function App() {
   const [qual, setQual] = useState<Phase>("race");
   const [admin, setAdmin] = useState(false);
   const [confirmReset, setConfirmReset] = useState(false);
+  const [tab, setTab] = useState<"race" | "config">("race");
   useEffect(() => {
     const id = setInterval(() => setNow(Date.now()), 250);
     return () => clearInterval(id);
@@ -64,14 +69,14 @@ function App() {
     if (!configured) {
       try {
         const saved = localStorage.getItem(KEY);
-        if (saved) setState(JSON.parse(saved) as EventState);
+        if (saved) setState(normalize(JSON.parse(saved)));
       } catch {}
-      const listener = (e: MessageEvent) => setState(e.data as EventState);
+      const listener = (e: MessageEvent) => setState(normalize(e.data));
       channel?.addEventListener("message", listener);
       const storage = (e: StorageEvent) => {
         if (e.key === KEY && e.newValue)
           try {
-            setState(JSON.parse(e.newValue) as EventState);
+            setState(normalize(JSON.parse(e.newValue)));
           } catch {}
       };
       window.addEventListener("storage", storage);
@@ -99,7 +104,7 @@ function App() {
       ref,
       (snap) => {
         setOnline(true);
-        if (snap.exists()) setState(snap.data() as EventState);
+        if (snap.exists()) setState(normalize(snap.data() as EventState));
         else setState(initial);
       },
       () => setOnline(false),
@@ -131,8 +136,34 @@ function App() {
     state.startAt !== null
       ? Math.min(now, state.finishAt ?? Infinity) - state.startAt
       : 0;
+  const relayNumber =
+    state.segments.length + (state.activeDriver ? 1 : 0);
   const total = totals(state, now);
-  const effectiveSignal = now > state.signalExpiresAt ? "READY" : state.signal;
+  const team = state.config.drivers;
+  const circuit = state.config.circuit;
+  const driven = (id: Driver) =>
+    (total[id]?.qualifying ?? 0) + (total[id]?.race ?? 0);
+  const drivenAll = team.length ? team.map((d) => driven(d.id)) : [0];
+  const boxConfirmed =
+    state.signal === "BOX" && state.signalConfirmedAt === state.signalAt;
+  const boxAwaitingAck =
+    role === "driver" &&
+    state.signal === "BOX" &&
+    !boxConfirmed;
+  const effectiveSignal =
+    boxAwaitingAck ||
+    now <= state.signalExpiresAt
+      ? state.signal
+      : "READY";
+  const signalDescription: Record<Signal, string> = {
+    READY: "EN ATTENTE DES CONSIGNES",
+    BOX: "BOX BOX",
+    PUSH: "ATTAQUE",
+    "STAY OUT": "FAIS TOI PLAIZ",
+    SLOW: "PRUDENCE",
+    CLEAR: "PISTE LIBRE",
+    MESSAGE: "MESSAGE DU STAND",
+  };
   const canEdit = !configured || admin;
   function start(driver: Driver) {
     const t = Date.now();
@@ -159,8 +190,43 @@ function App() {
       signal,
       message: message.trim().slice(0, 80),
       signalAt: t,
+      signalConfirmedAt: 0,
       signalExpiresAt: t + 120000,
     });
+  }
+  function sendCustomMessage() {
+    const text = message.trim().slice(0, 80);
+    if (!text) return;
+    const t = Date.now();
+    void save({
+      ...state,
+      signal: "MESSAGE",
+      message: text,
+      signalAt: t,
+      signalConfirmedAt: 0,
+      signalExpiresAt: t + 20000,
+    });
+    setMessage("");
+  }
+  async function acknowledgeBox() {
+    if (state.signal !== "BOX" || !boxAwaitingAck) return;
+    const confirmedAt = state.signalAt;
+    const updatedAt = Date.now();
+    const updated = { ...state, signalConfirmedAt: confirmedAt, updatedAt };
+    setState(updated);
+    if (configured) {
+      try {
+        await updateDoc(doc(db!, "events", eventId), {
+          signalConfirmedAt: confirmedAt,
+          updatedAt,
+        });
+      } catch (e) {
+        setError(`Confirmation impossible : ${String(e)}`);
+      }
+    } else {
+      localStorage.setItem(KEY, JSON.stringify(updated));
+      channel?.postMessage(updated);
+    }
   }
   function goRole(r: "stand" | "driver") {
     history.pushState({}, "", r === "driver" ? "/driver" : "/");
@@ -184,83 +250,128 @@ function App() {
     now <= new Date().setHours(13, 35, 0, 0);
   return (
     <div className={`app ${role === "driver" ? "driver-app" : ""}`}>
-      <header className="topbar">
-        <div className="brand">
-          <Flag size={25} />
-          <span>
-            KART<span className="accent">LIVE</span>
-          </span>
-          <small>ENDURANCE</small>
-        </div>
-        <div className="top-actions">
-          <span className={`connection ${online ? "good" : "bad"}`}>
-            {online ? <Wifi size={15} /> : <WifiOff size={15} />}{" "}
-            {configured ? (online ? "SYNC LIVE" : "HORS LIGNE") : "DÉMO LOCALE"}
-          </span>
-          <button
-            className="subtle"
-            onClick={() => goRole(role === "driver" ? "stand" : "driver")}
-          >
-            {role === "driver" ? "Vue stand" : "Vue pilote"}
-          </button>
-        </div>
-      </header>
+      {role === "stand" && (
+        <header className="topbar">
+          <div className="brand">
+            <Flag size={25} />
+            <span>
+              KART<span className="accent">LIVE</span>
+            </span>
+            <small>ENDURANCE</small>
+          </div>
+          <div className="top-actions">
+            <span className={`connection ${online ? "good" : "bad"}`}>
+              {online ? <Wifi size={15} /> : <WifiOff size={15} />} {" "}
+              {configured
+                ? online
+                  ? "SYNC LIVE"
+                  : "HORS LIGNE"
+                : "DÉMO LOCALE"}
+            </span>
+            <button className="subtle" onClick={() => goRole("driver")}>
+              Vue pilote
+            </button>
+          </div>
+        </header>
+      )}
       {role === "driver" ? (
         <main className="driver-view">
           <div className="driver-meta">
             <span>MESSAGE DU STAND</span>
-            <span>REÇU {state.signalAt ? clock(state.signalAt) : "—"}</span>
+            <div className="driver-meta-status">
+              <span>REÇU {state.signalAt ? clock(state.signalAt) : "—"}</span>
+              <span
+                className={`driver-connection ${online ? "good" : "bad"}`}
+                aria-label={
+                  configured
+                    ? online
+                      ? "Connexion active"
+                      : "Hors ligne"
+                    : "Mode démo locale"
+                }
+                title={
+                  configured
+                    ? online
+                      ? "Connexion active"
+                      : "Hors ligne"
+                    : "Mode démo locale"
+                }
+              >
+                {online ? <Wifi size={16} /> : <WifiOff size={16} />}
+              </span>
+            </div>
           </div>
-          <div className={`signal signal-${effectiveSignal.replace(" ", "-")}`}>
+          <button
+            type="button"
+            className={`signal signal-${effectiveSignal.replace(" ", "-")}${effectiveSignal === "BOX" ? " signal-box-clickable" : ""}${boxAwaitingAck && effectiveSignal === "BOX" ? " signal-flashing" : ""}${boxConfirmed && effectiveSignal === "BOX" ? " signal-confirmed" : ""}`}
+            disabled={effectiveSignal !== "BOX" || !boxAwaitingAck}
+            onClick={() => {
+              if (state.signal !== "BOX" || !boxAwaitingAck) return;
+              void acknowledgeBox();
+            }}
+            aria-label={
+              effectiveSignal === "BOX"
+                ? !boxAwaitingAck
+                  ? "Consigne BOX confirmée"
+                  : "Confirmer la réception de la consigne BOX"
+                : undefined
+            }
+          >
             <span className="signal-title">
-              {effectiveSignal === "READY" ? "EN ATTENTE" : effectiveSignal}
+              {effectiveSignal === "MESSAGE"
+                ? state.message
+                : effectiveSignal === "READY"
+                  ? "EN ATTENTE"
+                  : signalDescription[effectiveSignal]}
             </span>
-            <span className="signal-desc">
-              {effectiveSignal === "BOX"
-                ? "RENTRE AUX STANDS"
-                : effectiveSignal === "PUSH"
-                  ? "ACCÉLÈRE SI POSSIBLE"
-                  : effectiveSignal === "STAY OUT"
-                    ? "RESTE EN PISTE"
-                    : effectiveSignal === "SLOW"
-                      ? "RALENTIS / PRUDENCE"
-                      : effectiveSignal === "CLEAR"
-                        ? "PISTE LIBRE"
-                        : "EN ATTENTE DES CONSIGNES"}
-            </span>
-          </div>
-          <div className="driver-note">
-            {effectiveSignal !== "READY" && state.message
-              ? state.message
-              : "Ne manipule pas le téléphone en roulant."}
-          </div>
-          <div className="driver-bottom">
-            <div>
-              <small>PILOTE</small>
-              <strong>{state.activeDriver || "—"}</strong>
+            {effectiveSignal === "BOX" && (
+              <span className="signal-ack">
+                {boxAwaitingAck
+                  ? "TOUCHER POUR CONFIRMER LA RÉCEPTION"
+                  : "CONFIRMÉ PAR LE PILOTE"}
+              </span>
+            )}
+          </button>
+          <div className="driver-side">
+            {effectiveSignal !== "READY" &&
+              effectiveSignal !== "MESSAGE" &&
+              state.message && (
+                <div className="driver-note">
+                  <small>INFO COMPLÉMENTAIRE</small>
+                  <span>{state.message}</span>
+                </div>
+              )}
+            <div className="driver-bottom">
+              <div className="driver-relay">
+                <small>RELAIS N°</small>
+                <strong>{relayNumber || "—"}</strong>
+              </div>
+              <div className="driver-timer">
+                <small>RELAIS EN COURS</small>
+                <strong>{format(activeMs)}</strong>
+              </div>
+              <div className="driver-timer">
+                <small>COURSE</small>
+                <strong>{format(elapsed)}</strong>
+              </div>
             </div>
-            <div>
-              <small>RELAIS EN COURS</small>
-              <strong>{format(activeMs)}</strong>
-            </div>
-            <div>
-              <small>COURSE</small>
-              <strong>{format(elapsed)}</strong>
-            </div>
           </div>
-          <p className="driver-warning">
-            Affichage passif uniquement · Fixation et utilisation soumises à
-            l’autorisation du circuit.
-          </p>
         </main>
       ) : (
         <main className="dashboard">
           <div className="heading">
             <div>
-              <p className="eyebrow">LILLE KARTING · 900 M · 20 ÉQUIPES</p>
+              <p className="eyebrow">
+                {(circuit.name || "Circuit").toUpperCase()} · {team.length}{" "}
+                PILOTES
+              </p>
               <h1>Centre de course</h1>
               <p className="muted">
                 10h35 — 14h35 · 4 heures · 7 changements minimum
+                {circuit.bestLapDry !== null &&
+                  ` · Record sec ${formatLap(circuit.bestLapDry)}`}
+                {circuit.bestLapWet !== null &&
+                  ` · Record mouillé ${formatLap(circuit.bestLapWet)}`}
               </p>
             </div>
             <div className="right-head">
@@ -288,6 +399,31 @@ function App() {
               <button onClick={() => setError("")}>×</button>
             </div>
           )}
+          <nav className="tabs">
+            <button
+              className={tab === "race" ? "tab tab-active" : "tab"}
+              onClick={() => setTab("race")}
+            >
+              <Flag size={16} /> Course
+            </button>
+            <button
+              className={tab === "config" ? "tab tab-active" : "tab"}
+              onClick={() => setTab("config")}
+            >
+              <Settings size={16} /> Configuration
+            </button>
+          </nav>
+          {tab === "config" ? (
+            <ConfigPanel
+              config={state.config}
+              canEdit={canEdit}
+              ready={Boolean(user)}
+              activeDriver={state.activeDriver}
+              setError={setError}
+              onApply={(config) => save({ ...state, config })}
+            />
+          ) : (
+          <>
           <section className="stats">
             <article className="stat">
               <span>
@@ -302,7 +438,7 @@ function App() {
               <span>
                 <Users size={17} /> PILOTE ACTUEL
               </span>
-              <strong>{state.activeDriver || "—"}</strong>
+              <strong>{driverName(state, state.activeDriver) || "—"}</strong>
               <small>
                 {state.activeDriver
                   ? `Roulage : ${format(activeMs)}`
@@ -342,40 +478,45 @@ function App() {
                   <h2>
                     <Radio size={19} /> Consignes au pilote
                   </h2>
-                  <span className="pill">
-                    {state.activeDriver
-                      ? `PILOTE ${state.activeDriver}`
-                      : "EN ATTENTE"}
+                  <span className="pill active-signal">
+                    {effectiveSignal === "READY"
+                      ? "AUCUNE CONSIGNE"
+                      : `MESSAGE ACTIF : ${effectiveSignal === "MESSAGE" ? state.message : signalDescription[effectiveSignal]}`}
                   </span>
+                  {boxConfirmed && effectiveSignal === "BOX" && (
+                    <span className="pill confirmation-tag">
+                      CONFIRMÉ PAR LE PILOTE
+                    </span>
+                  )}
                 </div>
                 <div className="commands">
                   <button
                     disabled={!canEdit}
-                    className="command boxcmd"
+                    className={`command boxcmd${effectiveSignal === "BOX" ? " command-active" : ""}`}
                     onClick={() => send("BOX")}
                   >
-                    BOX <small>RENTRE</small>
+                    BOX BOX
                   </button>
                   <button
                     disabled={!canEdit}
-                    className="command pushcmd"
+                    className={`command pushcmd${effectiveSignal === "PUSH" ? " command-active" : ""}`}
                     onClick={() => send("PUSH")}
                   >
-                    PUSH <small>ATTAQUE</small>
+                    ATTAQUE
                   </button>
                   <button
                     disabled={!canEdit}
-                    className="command staycmd"
+                    className={`command staycmd${effectiveSignal === "STAY OUT" ? " command-active" : ""}`}
                     onClick={() => send("STAY OUT")}
                   >
-                    STAY OUT <small>CONTINUE</small>
+                    FAIS TOI PLAIZ
                   </button>
                   <button
                     disabled={!canEdit}
-                    className="command slowcmd"
+                    className={`command slowcmd${effectiveSignal === "SLOW" ? " command-active" : ""}`}
                     onClick={() => send("SLOW")}
                   >
-                    SLOW <small>PRUDENCE</small>
+                    PRUDENCE
                   </button>
                 </div>
                 <div className="input-row">
@@ -387,16 +528,16 @@ function App() {
                     onChange={(e) => setMessage(e.target.value)}
                   />
                   <button
-                    disabled={!canEdit}
-                    className="outline"
-                    onClick={() => send("CLEAR")}
+                    disabled={!canEdit || !message.trim()}
+                    className="primary send-message"
+                    onClick={sendCustomMessage}
                   >
-                    <Send size={16} /> CLEAR
+                    <Send size={16} /> ENVOYER
                   </button>
                 </div>
                 <p className="muted tiny">
-                  Les consignes expirent après 2 minutes. Elles ne remplacent
-                  jamais les drapeaux et instructions des commissaires.
+                  Une consigne écrite reste visible 20 secondes. Les consignes
+                  ne remplacent jamais les drapeaux et instructions des commissaires.
                 </p>
               </article>
               <article className="panel">
@@ -417,14 +558,14 @@ function App() {
                   </select>
                 </div>
                 <div className="driver-buttons">
-                  {drivers.map((d) => (
+                  {team.map((d) => (
                     <button
-                      key={d}
+                      key={d.id}
                       disabled={!canEdit || Boolean(state.activeDriver)}
-                      onClick={() => start(d)}
+                      onClick={() => start(d.id)}
                       className="driver-btn"
                     >
-                      <strong>{d}</strong>
+                      <strong>{d.name}</strong>
                       <small>Début relais</small>
                     </button>
                   ))}
@@ -480,16 +621,13 @@ function App() {
                 <p className="muted tiny">
                   Qualifications + course · objectif : même temps pour chacun
                 </p>
-                {drivers.map((d) => {
-                  const ms = total[d].qualifying + total[d].race;
-                  const max = Math.max(
-                    1,
-                    ...drivers.map((x) => total[x].qualifying + total[x].race),
-                  );
+                {team.map((d) => {
+                  const ms = driven(d.id);
+                  const max = Math.max(1, ...drivenAll);
                   return (
-                    <div className="driver-total" key={d}>
+                    <div className="driver-total" key={d.id}>
                       <div className="total-line">
-                        <strong>Pilote {d}</strong>
+                        <strong>{d.name}</strong>
                         <span>{format(ms)}</span>
                       </div>
                       <div className="track">
@@ -499,26 +637,15 @@ function App() {
                         />
                       </div>
                       <small>
-                        Qualif {format(total[d].qualifying)} · Course{" "}
-                        {format(total[d].race)}
+                        Qualif {format(total[d.id]?.qualifying ?? 0)} · Course{" "}
+                        {format(total[d.id]?.race ?? 0)}
                       </small>
                     </div>
                   );
                 })}
                 <div className="balance">
                   Écart max :{" "}
-                  {format(
-                    Math.max(
-                      ...drivers.map(
-                        (d) => total[d].qualifying + total[d].race,
-                      ),
-                    ) -
-                      Math.min(
-                        ...drivers.map(
-                          (d) => total[d].qualifying + total[d].race,
-                        ),
-                      ),
-                  )}
+                  {format(Math.max(...drivenAll) - Math.min(...drivenAll))}
                 </div>
               </article>
               <article className="panel">
@@ -576,7 +703,7 @@ function App() {
                       .reverse()
                       .map((s) => (
                         <div key={s.id}>
-                          <strong>{s.driver}</strong>
+                          <strong>{driverName(state, s.driver)}</strong>
                           <span>
                             {s.phase === "race" ? "Course" : "Qualifs"}
                           </span>
@@ -593,6 +720,8 @@ function App() {
               </article>
             </div>
           </section>
+          </>
+          )}
           <section className="panel bottom-panel">
             <h2>Administration</h2>
             {configured && !admin ? (
@@ -632,7 +761,11 @@ function App() {
                   <button
                     className="danger"
                     onClick={() => {
-                      void save({ ...initial, updatedAt: Date.now() });
+                      void save({
+                        ...initial,
+                        config: state.config,
+                        updatedAt: Date.now(),
+                      });
                       setConfirmReset(false);
                     }}
                   >
@@ -649,10 +782,6 @@ function App() {
           </section>
         </main>
       )}
-      <footer>
-        KART LIVE · Application d'assistance — respectez toujours les consignes
-        de sécurité du circuit.
-      </footer>
     </div>
   );
 }
