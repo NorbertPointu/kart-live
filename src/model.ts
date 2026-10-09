@@ -65,6 +65,7 @@ export type RaceStrategy = {
   minStintMinutes: number;
   maxStintMinutes: number;
   distributionMode: "next" | "remaining";
+  raceDrivers: Driver[];
   qualifyingOrder: Driver[];
   qualifyingDone: Driver[];
   fuelWindows: PitWindow[];
@@ -81,6 +82,7 @@ export type EventState = {
   activeSince: number | null;
   phase: Phase;
   segments: Segment[];
+  raceChanges: number;
   pitSince: number | null;
   fuel1: boolean;
   fuel2: boolean;
@@ -149,7 +151,8 @@ export function defaultStrategy(driverIds: Driver[], now = Date.now()): RaceStra
     minStintMinutes: 10,
     maxStintMinutes: 45,
     distributionMode: "next",
-    qualifyingOrder: [...driverIds],
+    raceDrivers: [...driverIds],
+    qualifyingOrder: driverIds.slice(0, 3),
     qualifyingDone: [],
     fuelWindows: [
       {
@@ -180,6 +183,11 @@ export function normalize(data: Partial<EventState>): EventState {
     ...initial,
     ...data,
     config,
+    raceChanges: data.raceChanges ?? Math.max(
+      0,
+      (data.segments ?? []).filter((segment) => segment.phase === "race").length -
+        (data.activeDriver ? 0 : 1),
+    ),
     strategy: {
       ...defaultStrategy(config.drivers.map((driver) => driver.id)),
       ...data.strategy,
@@ -218,6 +226,7 @@ export const initial: EventState = {
   activeSince: null,
   phase: "qualifying",
   segments: [],
+  raceChanges: 0,
   pitSince: null,
   fuel1: false,
   fuel2: false,
@@ -240,6 +249,12 @@ export function totals(s: EventState, now: number) {
   if (s.activeDriver && s.activeSince !== null)
     add(s.activeDriver, s.phase, now - s.activeSince);
   return r;
+}
+export function countRaceRelays(
+  s: Pick<EventState, "phase" | "segments" | "activeDriver">,
+): number {
+  return s.segments.filter((segment) => segment.phase === "race").length +
+    Number(s.phase === "race" && s.activeDriver !== null);
 }
 export function format(ms: number) {
   const seconds = Math.floor(Math.max(0, ms) / 1000);

@@ -3,6 +3,8 @@ import "./style.css";
 import {
   Clock3,
   CalendarClock,
+  CarFront,
+  Check,
   Flag,
   Fuel,
   LogIn,
@@ -24,6 +26,7 @@ import {
   Signal,
   clock,
   closeSegment,
+  countRaceRelays,
   currentPhase,
   driverName,
   format,
@@ -53,8 +56,12 @@ import { ConfigPanel } from "./ConfigPanel";
 import { StrategyPanel } from "./StrategyPanel";
 import {
   buildStrategyTimeline,
+  driverToPutOnTrack,
+  firstStrategyRelayDriver,
+  nextStrategyRelayDriver,
   nextPlannedDriverAt,
   plannedDriverAt,
+  strategyRelayIndex,
 } from "./strategy";
 import { FirebaseError } from "firebase/app";
 import { createRoot } from "react-dom/client";
@@ -78,9 +85,9 @@ function App() {
   const [password, setPassword] = useState("");
   const [error, setError] = useState("");
   const [message, setMessage] = useState("");
-  const [showOptionalMessage, setShowOptionalMessage] = useState(false);
   const [admin, setAdmin] = useState(false);
   const [confirmReset, setConfirmReset] = useState(false);
+  const [confirmFinishQualification, setConfirmFinishQualification] = useState(false);
   const [confirmFinishRace, setConfirmFinishRace] = useState(false);
   const [tab, setTab] = useState<"race" | "strategy" | "config">("race");
   useEffect(() => {
@@ -183,13 +190,13 @@ function App() {
       return true;
     }
   }
-  const activeMs =
-    state.activeSince !== null && state.activeDriver
-      ? now - state.activeSince
-      : 0;
   const elapsed =
     state.startAt !== null
       ? Math.min(now, state.finishAt ?? Infinity) - state.startAt
+      : 0;
+  const pilotSessionElapsed =
+    state.activeDriver !== null && state.activeSince !== null
+      ? Math.max(0, now - state.activeSince)
       : 0;
   const qualificationElapsed =
     state.qualificationStartAt !== null
@@ -199,8 +206,6 @@ function App() {
             state.qualificationStartAt,
         )
       : 0;
-  const relayNumber =
-    state.segments.length + (state.activeDriver ? 1 : 0);
   const total = totals(state, now);
   const team = state.config.drivers;
   const circuit = state.config.circuit;
@@ -218,17 +223,29 @@ function App() {
     now <= state.signalExpiresAt
       ? state.signal
       : "READY";
+  const signalExpired = state.signalExpiresAt > 0 && now > state.signalExpiresAt;
+  const hasPilotMessage =
+    effectiveSignal === "MESSAGE" ||
+    (effectiveSignal !== "READY" && Boolean(state.message.trim()));
   const signalDescription: Record<Signal, string> = {
     READY: "EN ATTENTE DES CONSIGNES",
     BOX: "BOX",
     PUSH: "GO",
-    "STAY OUT": "DANS LES STANDS",
-    SLOW: "DANS LES STANDS",
+    "STAY OUT": "RESTE EN PISTE",
+    SLOW: "RALENTIS",
     CLEAR: "PISTE LIBRE",
     MESSAGE: "MESSAGE DU STAND",
   };
   const canEdit = !configured || admin;
   const phase = currentPhase(state);
+  const pilotModeFinished = state.finishAt !== null;
+  const phaseStarted = phase === "qualifying"
+    ? state.qualificationStartAt !== null
+    : state.startAt !== null;
+  const phaseFinished = phase === "qualifying"
+    ? state.qualificationFinishAt !== null
+    : state.finishAt !== null;
+  const phaseActive = phaseStarted && !phaseFinished;
   const phaseElapsed = phase === "qualifying" ? qualificationElapsed : elapsed;
   const phaseDuration =
     (phase === "qualifying"
@@ -237,6 +254,7 @@ function App() {
   const remainingTime = Math.max(0, phaseDuration - phaseElapsed);
   const raceInProgress = state.startAt !== null && state.finishAt === null;
   const completedRaceRelays = state.segments.filter((segment) => segment.phase === "race").length;
+  const raceRelayCount = countRaceRelays(state);
   const lastRaceDriver = state.segments
     .slice()
     .reverse()
@@ -253,93 +271,109 @@ function App() {
       : null;
     const currentDriver = phase === "race"
       ? state.activeDriver ?? (state.pitSince !== null ? lastRaceDriver ?? plannedDriver : plannedDriver)
-      : plannedDriver ?? state.activeDriver;
+      : state.activeDriver ?? plannedDriver;
+    const activeQualifyingIndex = state.activeDriver
+      ? state.strategy.qualifyingOrder.indexOf(state.activeDriver)
+      : -1;
     const nextDriver = phase === "race" && state.strategy.relays.length &&
       (state.activeDriver !== null || state.pitSince !== null)
-      ? state.strategy.relays[completedRaceRelays + (state.activeDriver ? 1 : 0)]?.driver ?? null
-      : nextPlannedDriverAt(
-          state.strategy,
-          phase,
-          now,
-          state.qualificationStartAt,
-          state.startAt,
-        );
+      ? nextStrategyRelayDriver(state.strategy, completedRaceRelays, state.activeDriver)
+      : phase === "qualifying" && activeQualifyingIndex >= 0
+        ? state.strategy.qualifyingOrder[activeQualifyingIndex + 1] ?? null
+        : nextPlannedDriverAt(
+            state.strategy,
+            phase,
+            now,
+            state.qualificationStartAt,
+            state.startAt,
+          );
+    const initialRaceRelayPending = phase === "race" && phaseActive &&
+      state.activeDriver === null && state.pitSince === null;
+    const driverToStartOnTrack = driverToPutOnTrack(
+      phase,
+      state.activeDriver !== null,
+      state.pitSince !== null,
+      currentDriver,
+      nextDriver,
+    );
   const raceTimeline = buildStrategyTimeline(
     state.strategy,
     state.startAt ?? state.strategy.scheduledStartAt,
   );
-  const firstRelayIndex = raceTimeline.findIndex((item) => item.kind === "relay");
-  const activeTimelineIndex = state.startAt === null
-    ? -1
-    : raceTimeline.findIndex((item) => now >= item.startAt && now < item.endAt);
-  const previousRelayIndices = raceTimeline
-    .map((item, index) => item.kind === "relay" && index < activeTimelineIndex ? index : -1)
-    .filter((index) => index >= 0);
+  const completedRelayPosition = Math.max(0, completedRaceRelays - 1);
   const actualRelayPosition = phase === "race" && state.activeDriver !== null
-    ? completedRaceRelays
+    ? strategyRelayIndex(state.strategy, completedRaceRelays, state.activeDriver)
     : phase === "race" && state.pitSince !== null
-      ? Math.max(0, completedRaceRelays - 1)
+      ? strategyRelayIndex(state.strategy, completedRelayPosition, lastRaceDriver)
       : null;
-  const actualRelayId = actualRelayPosition === null
-    ? null
-    : state.strategy.relays[actualRelayPosition]?.id;
-  const currentRelayIndex = actualRelayId
-    ? raceTimeline.findIndex((item) => item.kind === "relay" && item.relay.id === actualRelayId)
-    : activeTimelineIndex >= 0
-      ? raceTimeline[activeTimelineIndex].kind === "relay"
-        ? activeTimelineIndex
-        : previousRelayIndices[previousRelayIndices.length - 1] ?? firstRelayIndex
-      : firstRelayIndex;
   const currentRelayNumber = Math.max(
     1,
-    completedRaceRelays + (state.activeDriver ? 1 : 0),
+    actualRelayPosition !== null && actualRelayPosition >= 0
+      ? actualRelayPosition + 1
+      : completedRaceRelays + 1,
   );
-  const nextRelayNumber = currentRelayNumber + 1;
-  const nextRelayIndex = raceTimeline.findIndex(
-    (item, index) => index > currentRelayIndex && item.kind === "relay",
+  const driverRelayNumber = phase === "qualifying"
+    ? Math.max(1, state.strategy.qualifyingOrder.indexOf(currentDriver ?? "") + 1)
+    : currentRelayNumber;
+  const nextStrategyRelayPosition = strategyRelayIndex(
+    state.strategy,
+    actualRelayPosition !== null && actualRelayPosition >= 0
+      ? actualRelayPosition + 1
+      : completedRaceRelays,
+    nextDriver,
   );
-  const plannedPitBeforeNext = raceTimeline.find(
-    (item, index) =>
+  const nextRelayNumber = nextStrategyRelayPosition >= 0
+    ? nextStrategyRelayPosition + 1
+    : currentRelayNumber + 1;
+  const nextPlannedPit = raceTimeline.find(
+    (item) =>
       item.kind === "pit" &&
-      index > currentRelayIndex &&
-      (nextRelayIndex < 0 || index < nextRelayIndex) &&
+      item.window.status === "planned" &&
       (state.startAt === null || item.endAt > now),
   );
-  const plannedPitAfterNext = nextRelayIndex < 0
-    ? undefined
-    : raceTimeline.find(
-        (item, index) =>
-          item.kind === "pit" &&
-          index >= nextRelayIndex &&
-          (state.startAt === null || item.endAt > now),
-      );
   function start(driver: Driver, eventType = "relay_started") {
     const t = Date.now();
     const closed = closeSegment(state, t);
+    const previousRaceDriver = state.activeDriver ??
+      (state.pitSince !== null ? lastRaceDriver : plannedDriver);
+    const isRaceChange = phase === "race" &&
+      state.startAt !== null &&
+      previousRaceDriver !== null &&
+      previousRaceDriver !== driver;
     void save({
       ...closed,
       activeDriver: driver,
       activeSince: t,
+      raceChanges: state.raceChanges + Number(isRaceChange),
       pitSince: null,
-      signal: "PUSH",
-      message: "",
+      signal: "MESSAGE",
+      message: `Go ${driverName(state, driver)}`,
       signalAt: t,
       signalConfirmedAt: 0,
-      signalExpiresAt: t + 120000,
+      signalExpiresAt: t + 10000,
       phase,
     }, eventType);
   }
   function completeStrategicChange() {
-    const isChange = Boolean(state.activeDriver || state.pitSince !== null);
-    const driverToStart = isChange ? nextDriver : currentDriver ?? nextDriver;
-    if (driverToStart)
-      start(driverToStart, isChange ? "driver_change_completed" : "relay_started");
+    if (state.activeDriver) {
+      pit();
+      return;
+    }
+    if (state.pitSince === null && currentDriver)
+      start(currentDriver, "relay_started");
+  }
+  function startNextDriver() {
+    if (!phaseActive || !driverToStartOnTrack) return;
+    const eventType = phase === "qualifying"
+      ? "qualification_driver_started"
+      : state.activeDriver ? "driver_change_completed" : "relay_started";
+    start(driverToStartOnTrack, eventType);
   }
   function pit() {
     const t = Date.now();
     const closed = closeSegment(state, t);
     void save(
-      { ...closed, pitSince: t, signal: "READY", signalExpiresAt: 0 },
+      { ...closed, pitSince: t, signal: "READY", message: "", signalExpiresAt: 0 },
       "relay_ended",
     );
   }
@@ -411,6 +445,7 @@ function App() {
           activeDriver: null,
           activeSince: null,
           segments: [],
+          raceChanges: 0,
           pitSince: null,
           fuel1: false,
           fuel2: false,
@@ -428,16 +463,19 @@ function App() {
           },
         }
       : state;
+    const startingDriver = firstStrategyRelayDriver(next.strategy);
     void save({
       ...next,
+      activeDriver: startingDriver,
+      activeSince: startingDriver !== null ? t : null,
       phase: "race",
       startAt: t,
       finishAt: null,
-      signal: "PUSH",
-      message: "",
+      signal: "MESSAGE",
+      message: "Go Go Go",
       signalAt: t,
       signalConfirmedAt: 0,
-      signalExpiresAt: t + 120000,
+      signalExpiresAt: t + 10_000,
     }, "race_started");
   }
   function startQualification() {
@@ -447,20 +485,26 @@ function App() {
       phase: "qualifying",
       qualificationStartAt: t,
       qualificationFinishAt: null,
-      signal: "PUSH",
-      message: "",
+      signal: "MESSAGE",
+      message: "Vas-y fume les",
       signalAt: t,
       signalConfirmedAt: 0,
-      signalExpiresAt: t + 120000,
+      signalExpiresAt: t + 10_000,
     }, "qualification_started");
   }
   function finishQualification() {
     const t = Date.now();
+    setConfirmFinishQualification(false);
     const closed = closeSegment(state, t);
     void save({
       ...closed,
       phase: "race",
       qualificationFinishAt: t,
+      signal: "READY",
+      message: "",
+      signalAt: t,
+      signalConfirmedAt: 0,
+      signalExpiresAt: 0,
     }, "qualification_finished");
   }
   function createNewQualification(source: EventState): EventState {
@@ -476,6 +520,7 @@ function App() {
       activeSince: null,
       phase: "qualifying",
       segments: [],
+      raceChanges: 0,
       pitSince: null,
       fuel1: false,
       fuel2: false,
@@ -552,7 +597,7 @@ function App() {
         </header>
       )}
       {role === "driver" ? (
-        <main className="driver-view">
+        <main className={`driver-view${hasPilotMessage ? " driver-view-with-message" : ""}`}>
           <div className="driver-meta">
             <span>MESSAGE DU STAND</span>
             <div className="driver-meta-status">
@@ -580,38 +625,37 @@ function App() {
           </div>
           <button
             type="button"
-            className={`signal signal-${effectiveSignal.replace(" ", "-")}${state.finishAt !== null ? " signal-finished" : ""}${state.startAt === null && effectiveSignal === "READY" ? " signal-start" : ""}${effectiveSignal === "BOX" ? " signal-box-clickable" : ""}${boxAwaitingAck && effectiveSignal === "BOX" ? " signal-flashing" : ""}${boxConfirmed && effectiveSignal === "BOX" ? " signal-confirmed" : ""}`}
-            disabled={state.finishAt !== null || effectiveSignal !== "BOX" || !boxAwaitingAck}
+            className={`signal signal-${effectiveSignal.replace(" ", "-")}${pilotModeFinished ? " signal-finished" : ""}${state.startAt === null && effectiveSignal === "READY" ? " signal-start" : ""}${effectiveSignal === "BOX" ? " signal-box-clickable" : ""}${boxAwaitingAck && effectiveSignal === "BOX" ? " signal-flashing" : ""}${boxConfirmed && effectiveSignal === "BOX" ? " signal-confirmed" : ""}`}
+            disabled={pilotModeFinished || effectiveSignal !== "BOX" || !boxAwaitingAck}
             onClick={() => {
-              if (state.finishAt !== null || state.signal !== "BOX" || !boxAwaitingAck) return;
+              if (pilotModeFinished || state.signal !== "BOX" || !boxAwaitingAck) return;
               void acknowledgeBox();
             }}
             aria-label={
               effectiveSignal === "BOX"
                 ? !boxAwaitingAck
                   ? "Consigne BOX confirmée"
-                  : "Confirmer la réception de la consigne BOX"
+                  : "Confirmer la consigne BOX"
                 : undefined
             }
           >
             <span className="signal-title">
-              {state.finishAt !== null
-                ? "BRAVO"
+              {pilotModeFinished
+                ? "ARRIVÉE"
+                : signalExpired || state.pitSince !== null
+                  ? ""
                 : effectiveSignal === "MESSAGE"
                   ? state.message
                   : effectiveSignal === "READY"
                     ? state.startAt === null
                       ? phase === "race" ? "PRÊT POUR LE DÉPART" : "DÉPART"
-                      : "DANS LES STANDS"
+                      : state.pitSince !== null
+                        ? "EN ATTENTE"
+                        : state.activeDriver
+                          ? "EN PISTE"
+                          : "PRÊT POUR LE DÉPART"
                     : signalDescription[effectiveSignal]}
             </span>
-            {effectiveSignal === "BOX" && (
-              <span className="signal-ack">
-                {boxAwaitingAck
-                  ? "TOUCHER POUR CONFIRMER LA RÉCEPTION"
-                  : "CONFIRMÉ PAR LE PILOTE"}
-              </span>
-            )}
           </button>
           <div className="driver-side">
             {effectiveSignal !== "READY" &&
@@ -622,19 +666,35 @@ function App() {
                   <span>{state.message}</span>
                 </div>
               )}
-            <div className="driver-bottom">
-              <div className="driver-relay">
-                <small>RELAIS N°</small>
-                <strong>{relayNumber || "—"}</strong>
-              </div>
-              <div className="driver-timer">
-                <small>RELAIS EN COURS</small>
-                <strong>{format(activeMs)}</strong>
-              </div>
-              <div className="driver-timer">
-                <small>COURSE</small>
-                <strong>{format(elapsed)}</strong>
-              </div>
+            <div className={`driver-bottom driver-live-metrics${phase === "qualifying" ? " driver-qualifying-metrics" : ""}`}>
+              {phase === "qualifying" ? (
+                <div className="driver-qualifying-card">
+                  <div className="driver-qualifying-pilot">
+                    <small>QUALIFICATION · PASSAGE N° {driverRelayNumber}</small>
+                    <strong>{driverName(state, currentDriver) || "—"}</strong>
+                  </div>
+                    <div className="driver-qualifying-clock">
+                      <small>TEMPS DU PILOTE</small>
+                      <strong>{format(pilotSessionElapsed)}</strong>
+                    </div>
+                  <div className="driver-qualifying-clock">
+                    <small>TEMPS DE QUALIFICATION</small>
+                    <strong>{format(phaseElapsed)}</strong>
+                  </div>
+                </div>
+              ) : (
+                <>
+                  <div className="driver-timer driver-pilot-timer">
+                    <small>RELAIS N° {driverRelayNumber} · {driverName(state, currentDriver) || "—"}</small>
+                    <strong>{format(pilotSessionElapsed)}</strong>
+                    <span className="driver-timer-caption">TEMPS DU RELAIS PILOTE</span>
+                  </div>
+                  <div className="driver-timer driver-global-timer">
+                    <small>TEMPS DE COURSE</small>
+                    <strong>{format(phaseElapsed)}</strong>
+                  </div>
+                </>
+              )}
             </div>
           </div>
         </main>
@@ -648,7 +708,7 @@ function App() {
               </p>
               <h1>Centre de course</h1>
               <p className="muted">
-                10h35 — 14h35 · 4 heures · 7 changements minimum
+                10h35 — 14h35 · 4 heures · 7 relais minimum
                 {circuit.bestLapDry !== null &&
                   ` · Record sec ${formatLap(circuit.bestLapDry)}`}
                 {circuit.bestLapWet !== null &&
@@ -740,128 +800,128 @@ function App() {
             </div>
             <div className="race-phase-status">
               <div className="phase-timer">
-                <small>TEMPS ÉCOULÉ</small>
+                <small>{phase === "qualifying" ? "QUALIFICATIONS" : "COURSE"}</small>
                 <strong>{format(phaseElapsed)}</strong>
+                <span className="phase-running">
+                  {phaseActive ? "EN COURS" : phaseFinished ? "TERMINÉ" : "PRÊT"}
+                </span>
               </div>
-              {phase === "qualifying" ? (
+              <div className="phase-remaining">
+                <small>TEMPS RESTANT</small>
+                <strong>{format(remainingTime)}</strong>
+              </div>
+            </div>
+          </section>
+          <section className={`relay-focus-row${phaseActive ? "" : " relay-focus-ready"}${effectiveSignal === "BOX" ? " relay-focus-box-sent" : ""}${phase === "race" && !nextDriver ? " relay-focus-finish" : ""}`} aria-label="Pilotes et consigne BOX">
+            <article className="stat stat-current">
+              <span><Users size={17} /> {initialRaceRelayPending ? "PILOTE PRÉVU" : "PILOTE ACTUEL"}</span>
+              <strong>{driverName(state, currentDriver) || "—"}</strong>
+              {phaseActive && state.activeDriver !== null && !(phase === "race" && !nextDriver) && (
                 <button
-                  className={state.qualificationStartAt && !state.qualificationFinishAt ? "outline" : "primary"}
-                  disabled={!canEdit || (!state.qualificationStartAt && !state.finishAt && (Boolean(state.activeDriver) || Boolean(state.startAt && !state.finishAt))) || Boolean(state.qualificationFinishAt && !state.finishAt)}
-                  onClick={state.finishAt
-                    ? prepareNewQualification
-                    : state.qualificationStartAt && !state.qualificationFinishAt
-                      ? finishQualification
-                      : startQualification}
+                  type="button"
+                  className={`command boxcmd relay-box-inline relay-focus-action${effectiveSignal === "BOX" ? " command-active" : ""}`}
+                  disabled={!canEdit}
+                  aria-label="Envoyer la consigne BOX"
+                  aria-pressed={effectiveSignal === "BOX"}
+                  onClick={() => send("BOX")}
                 >
-                  {state.qualificationStartAt && !state.qualificationFinishAt ? <Flag size={16} /> : <Play size={16} />}
-                  {state.qualificationStartAt && !state.qualificationFinishAt ? "Fin Qualification" : "Départ Qualification"}
-                </button>
-              ) : (
-                <button
-                  className={state.startAt && !state.finishAt ? "outline" : "primary"}
-                  disabled={!canEdit || (!state.qualificationFinishAt && !raceInProgress && state.phase !== "race")}
-                  onClick={state.startAt ? () => setConfirmFinishRace(true) : startRace}
-                >
-                  {state.startAt ? <Flag size={16} /> : <Play size={16} />}
-                  {state.startAt ? "Fin Course" : "Départ Course"}
+                  BOX
+                  {boxConfirmed
+                    ? <Check className="box-check-icon" size={20} />
+                    : <CarFront size={20} />}
                 </button>
               )}
-            </div>
-            {confirmFinishRace && (
-              <div className="phase-confirm" role="alertdialog" aria-label="Confirmer la fin de course">
-                <p>Confirmer la fin de course et enregistrer l’heure d’arrivée ?</p>
-                <button className="outline" onClick={() => setConfirmFinishRace(false)}>
-                  Annuler
+              {state.signal === "BOX" && boxConfirmed && (
+                <span className="relay-box-ack" role="status">
+                  <Check size={15} /> Bien reçu par le pilote
+                </span>
+              )}
+              {!phaseActive && (
+                <button
+                  type="button"
+                  className="primary relay-focus-action relay-mode-start"
+                  disabled={!canEdit || (phase === "qualifying"
+                    ? Boolean(state.activeDriver) || raceInProgress
+                    : !state.qualificationFinishAt && !raceInProgress && state.phase !== "race")}
+                  onClick={() => phase === "qualifying"
+                    ? state.finishAt ? prepareNewQualification() : startQualification()
+                    : startRace()}
+                >
+                  <Play size={15} /> {phase === "qualifying" ? "Départ Qualification" : "Départ Course"}
                 </button>
-                <button className="primary" onClick={finishRace}>
-                  <Flag size={16} /> Confirmer la fin de course
-                </button>
-              </div>
-            )}
+              )}
+            </article>
+            <article className="stat stat-next">
+              <span><Users size={17} /> {initialRaceRelayPending ? "PILOTE À METTRE EN PISTE" : "PILOTE SUIVANT"}</span>
+              <strong>{driverToStartOnTrack ? driverName(state, driverToStartOnTrack) : phase === "qualifying" ? "Fin des qualifications" : "Fin de course"}</strong>
+              {phaseActive && (
+                driverToStartOnTrack ? (
+                  <button
+                    type="button"
+                    className="primary relay-next-start relay-focus-action"
+                    disabled={!canEdit}
+                    onClick={startNextDriver}
+                  >
+                    <Play size={15} /> En piste
+                  </button>
+                ) : confirmFinishQualification || confirmFinishRace ? (
+                  <div className="relay-mode-confirm" role="alertdialog" aria-label="Confirmer la fin du mode">
+                    <p>Confirmer la fin {phase === "qualifying" ? "des qualifications" : "de la course"} ?</p>
+                    <div>
+                      <button className="outline" onClick={() => {
+                        setConfirmFinishQualification(false);
+                        setConfirmFinishRace(false);
+                      }}>
+                        Annuler
+                      </button>
+                      <button className="primary" onClick={phase === "qualifying" ? finishQualification : finishRace}>
+                        <Flag size={15} /> Confirmer
+                      </button>
+                    </div>
+                  </div>
+                ) : (
+                  <button className="relay-next-start relay-focus-action" disabled={!canEdit} onClick={() => phase === "qualifying" ? setConfirmFinishQualification(true) : setConfirmFinishRace(true)}>
+                    <Flag size={15} /> {phase === "qualifying" ? "Fin Qualification" : "Fin Course"}
+                  </button>
+                )
+              )}
+            </article>
           </section>
           <section className={`stats${phase === "qualifying" ? " stats-qualifying" : ""}`}>
-            <article className="stat stat-next">
-              <span>
-                <Users size={17} /> PROCHAIN PILOTE
-              </span>
-              <strong>{driverName(state, nextDriver) || "—"}</strong>
-              <small>{nextDriver ? "Selon la stratégie" : "Aucun passage suivant"}</small>
-            </article>
-              <article className="stat stat-remaining">
-                <span>
-                  <Clock3 size={17} /> TEMPS RESTANT
-                </span>
-                <strong>{format(remainingTime)}</strong>
-                <small>{phaseElapsed > 0 ? "Avant la fin prévue" : "Durée totale prévue"}</small>
-              </article>
               <article className="panel pilot-command-panel">
                 <div className="panel-title">
                   <div className="pilot-command-title">
                     <h2>
                       <Radio size={19} /> Consignes au pilote
                     </h2>
-                    <strong>{driverName(state, currentDriver) || "—"}</strong>
                   </div>
                 </div>
-                <div className="commands">
-                  <button
+                <div className="input-row optional-message">
+                  <input
                     disabled={!canEdit}
-                    className={`command boxcmd${effectiveSignal === "BOX" ? " command-active" : ""}`}
-                    onClick={() => send("BOX")}
-                  >
-                    BOX
-                    {boxConfirmed && effectiveSignal === "BOX" && (
-                      <span className="pill confirmation-tag command-confirmation">
-                        CONFIRMÉ PAR LE PILOTE
-                      </span>
-                    )}
-                  </button>
+                    aria-label="Message facultatif"
+                    value={message}
+                    maxLength={80}
+                    onChange={(e) => setMessage(e.target.value)}
+                  />
                   <button
-                    disabled={!canEdit}
-                    className={`command pushcmd${effectiveSignal === "PUSH" ? " command-active" : ""}`}
-                    onClick={() => send("PUSH")}
+                    disabled={!canEdit || !message.trim()}
+                    className="primary send-message"
+                    aria-label="Envoyer le message"
+                    title="Envoyer le message"
+                    onClick={sendCustomMessage}
                   >
-                    GO
-                  </button>
-                  <button
-                    type="button"
-                    className="outline message-toggle"
-                    aria-expanded={showOptionalMessage}
-                    onClick={() => setShowOptionalMessage((visible) => !visible)}
-                  >
-                    <Send size={14} /> {showOptionalMessage ? "Masquer le message" : "Message facultatif"}
+                    <Send size={16} />
                   </button>
                 </div>
-                {showOptionalMessage && (
-                  <div className="input-row optional-message">
-                    <input
-                      disabled={!canEdit}
-                      placeholder="Message facultatif (80 caractères)"
-                      value={message}
-                      maxLength={80}
-                      onChange={(e) => setMessage(e.target.value)}
-                    />
-                    <button
-                      disabled={!canEdit || !message.trim()}
-                      className="primary send-message"
-                      onClick={sendCustomMessage}
-                    >
-                      <Send size={16} /> ENVOYER
-                    </button>
-                  </div>
-                )}
               </article>
             <article className="stat stat-changes">
               <span>
-                <RotateCcw size={17} /> CHANGEMENTS
+                <Flag size={17} /> RELAIS
               </span>
               <strong>
-                {Math.max(
-                  0,
-                  state.segments.filter((x) => x.phase === "race").length -
-                    (state.activeDriver ? 0 : 1),
-                )}{" "}
-                <em>/ 7 min.</em>
+                {raceRelayCount}{" "}
+                <em>/ {state.strategy.minRelays} min.</em>
               </strong>
               <small>Compteur indicatif</small>
             </article>
@@ -895,25 +955,26 @@ function App() {
                       <div>
                         <small>PILOTE ACTUEL · RELAIS {currentRelayNumber}</small>
                         <strong>{driverName(state, currentDriver) || "—"}</strong>
-                        <span>{state.activeDriver === currentDriver ? "En piste" : state.pitSince !== null ? "Kart aux stands" : "Selon la stratégie"}</span>
+                        {state.pitSince !== null && <span>Kart aux stands</span>}
                       </div>
                     </article>
-                    {plannedPitBeforeNext?.kind === "pit" && (
+                    {nextPlannedPit?.kind === "pit" && (
                       <article className="relay-live-fuel">
                         <Fuel size={17} />
                         <div>
-                          <strong>{plannedPitBeforeNext.window.label}</strong>
-                          <small>Ravitaillement obligatoire · {clock(plannedPitBeforeNext.window.plannedAt ?? plannedPitBeforeNext.startAt)}</small>
+                          <strong>{nextPlannedPit.window.label}</strong>
+                          <small>Fenêtre {clock(nextPlannedPit.window.opensAt)} – {clock(nextPlannedPit.window.closesAt)}</small>
+                          <small>Passage prévu {clock(nextPlannedPit.window.plannedAt ?? nextPlannedPit.startAt)} · arrêt {nextPlannedPit.window.stopMinutes} min</small>
                         </div>
                       </article>
                     )}
                     <button
                       className="outline relay-change-button"
-                      disabled={!canEdit || !(currentDriver || nextDriver)}
+                      disabled={!canEdit || (!currentDriver && !nextDriver) || state.pitSince !== null}
                       onClick={completeStrategicChange}
                     >
                       <RotateCcw size={16} />
-                      {state.activeDriver || state.pitSince !== null ? "Changement effectué" : "Démarrer le relais prévu"}
+                      {state.activeDriver ? "Changement effectué" : state.pitSince !== null ? "Aux stands" : "Démarrer le relais prévu"}
                     </button>
                     <article
                       className="relay-live-step relay-live-next"
@@ -923,18 +984,8 @@ function App() {
                       <div>
                         <small>PILOTE SUIVANT · RELAIS {nextRelayNumber}</small>
                         <strong>{driverName(state, nextDriver) || "—"}</strong>
-                        <span>{nextDriver ? "Selon la stratégie" : "Aucun relais suivant"}</span>
                       </div>
                     </article>
-                    {!plannedPitBeforeNext && plannedPitAfterNext?.kind === "pit" && (
-                      <article className="relay-live-fuel relay-live-fuel-later">
-                        <Fuel size={17} />
-                        <div>
-                          <strong>{plannedPitAfterNext.window.label}</strong>
-                          <small>Ravitaillement obligatoire · {clock(plannedPitAfterNext.window.plannedAt ?? plannedPitAfterNext.startAt)}</small>
-                        </div>
-                      </article>
-                    )}
                     {state.activeDriver && (
                       <button className="outline relay-pit-button" disabled={!canEdit} onClick={pit}>
                         <Pause size={16} /> Entrée au stand

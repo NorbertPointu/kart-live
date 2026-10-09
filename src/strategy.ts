@@ -28,16 +28,25 @@ export function generateStrategy(
   const baseDuration = Math.floor(drivingMinutes / relayCount);
   let remainder = drivingMinutes % relayCount;
   const totals = new Map(driverIds.map((driver) => [driver, 0]));
+  let previousDriver: Driver | null = null;
   const relays: PlannedRelay[] = Array.from({ length: relayCount }, (_, index) => {
     const durationMinutes = baseDuration + (remainder-- > 0 ? 1 : 0);
-    const driver = driverIds.reduce((leastUsed, candidate) =>
+    const candidates = driverIds.length > 1 && previousDriver !== null
+      ? driverIds.filter((driver) => driver !== previousDriver)
+      : driverIds;
+    const driver = candidates.reduce((leastUsed, candidate) =>
       totals.get(candidate)! < totals.get(leastUsed)! ? candidate : leastUsed,
     );
     totals.set(driver, totals.get(driver)! + durationMinutes);
+    previousDriver = driver;
     return { id: `planned-${index + 1}`, driver, durationMinutes };
   });
 
   return { ...strategy, fuelWindows, relays };
+}
+
+export function firstStrategyRelayDriver(strategy: RaceStrategy): Driver | null {
+  return strategy.relays[0]?.driver ?? null;
 }
 
 export function moveRelay(
@@ -56,6 +65,21 @@ export function moveRelay(
   const [relay] = reordered.splice(fromIndex, 1);
   reordered.splice(toIndex, 0, relay);
   return reordered;
+}
+
+export function assignRelaysToDrivers(
+  relays: PlannedRelay[],
+  driverIds: Driver[],
+): PlannedRelay[] {
+  if (!driverIds.length) throw new Error("Il faut conserver au moins un pilote en course.");
+  const totals = new Map(driverIds.map((driver) => [driver, 0]));
+  return relays.map((relay) => {
+    const driver = driverIds.reduce((leastUsed, candidate) =>
+      totals.get(candidate)! < totals.get(leastUsed)! ? candidate : leastUsed,
+    );
+    totals.set(driver, totals.get(driver)! + relay.durationMinutes);
+    return { ...relay, driver };
+  });
 }
 
 export function resizeRelay(
@@ -277,9 +301,15 @@ export function nextPlannedDriverAt(
   raceStartAt: number | null,
 ): Driver | null {
   if (phase === "qualifying") {
+    if (qualificationStartAt === null) {
+      const remainingDrivers = strategy.qualifyingOrder.filter(
+        (driver) => !strategy.qualifyingDone.includes(driver),
+      );
+      return remainingDrivers[1] ?? null;
+    }
+
     const startAt =
-      qualificationStartAt ??
-      strategy.scheduledStartAt - strategy.qualifyingMinutes * 60_000;
+      qualificationStartAt;
     const slots = scheduleQualifying(
       strategy.qualifyingOrder,
       strategy.qualifyingMinutes,
@@ -325,6 +355,53 @@ export function nextPlannedDriverAt(
   if (upcomingRelay?.kind === "relay") return upcomingRelay.relay.driver;
   if (currentIndex >= 0) return null;
   return plannedRelays.find((item) => item.startAt > now)?.relay.driver ?? null;
+}
+
+export function strategyRelayIndex(
+  strategy: RaceStrategy,
+  startIndex: number,
+  driver: Driver | null,
+): number {
+  return driver
+    ? strategy.relays.findIndex(
+        (relay, index) => index >= startIndex && relay.driver === driver,
+      )
+    : -1;
+}
+
+export function nextStrategyRelayDriver(
+  strategy: RaceStrategy,
+  completedRelayCount: number,
+  activeDriver: Driver | null,
+): Driver | null {
+  const activeRelayIndex = strategyRelayIndex(
+    strategy,
+    completedRelayCount,
+    activeDriver,
+  );
+  const nextRelayIndex = activeRelayIndex >= 0
+    ? activeRelayIndex + 1
+    : completedRelayCount + (activeDriver ? 1 : 0);
+  return strategy.relays[nextRelayIndex]?.driver ?? null;
+}
+
+export function driverToPutOnTrack(
+  phase: Phase,
+  hasActiveDriver: boolean,
+  isInPit: boolean,
+  currentDriver: Driver | null,
+  nextDriver: Driver | null,
+): Driver | null {
+  return phase === "race" && !hasActiveDriver && !isInPit
+    ? currentDriver
+    : nextDriver;
+}
+
+export function removeQualifyingDriver(order: Driver[], driver: Driver): Driver[] {
+  if (order.length <= 1)
+    throw new Error("Il faut conserver au moins un pilote pour les qualifications.");
+  if (!order.includes(driver)) return order;
+  return order.filter((candidate) => candidate !== driver);
 }
 
 export function pitWindowAt(window: PitWindow, at: number): PitWindow {

@@ -72,6 +72,9 @@ button:disabled {
   gap: 6px;
   color: #a8b9cc;
 }
+.relay-box-inline .box-check-icon {
+  color: #49c998;
+}
 .good svg {
   color: #49c998;
 }
@@ -156,6 +159,57 @@ button.subtle {
 .stats-qualifying {
   grid-template-columns: repeat(3, minmax(0, 1fr));
 }
+.stat-remaining {
+  margin-bottom: 12px;
+}
+.relay-focus-row {
+  display: grid;
+  grid-template-columns: minmax(0, 2fr) minmax(0, 1fr);
+  align-items: stretch;
+  gap: 12px;
+  margin-bottom: 12px;
+}
+.relay-focus-row.relay-focus-ready {
+  grid-template-columns: minmax(0, 2fr) minmax(0, 1fr);
+}
+.relay-focus-row.relay-focus-box-sent {
+  grid-template-columns: minmax(0, 1fr) minmax(0, 2fr);
+}
+.relay-focus-row.relay-focus-finish {
+  grid-template-columns: minmax(0, 1fr) minmax(0, 2fr);
+}
+.relay-focus-row .stat-current strong,
+.relay-focus-row .stat-next strong {
+  color: #82aaff;
+  font-size: 30px;
+  font-weight: 800;
+  line-height: 1.2;
+  overflow-wrap: anywhere;
+}
+.relay-focus-row .relay-focus-action {
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  justify-content: center;
+  align-self: stretch;
+  width: 100%;
+  min-width: 0;
+  min-height: 46px;
+  margin-top: 10px;
+  padding: 8px 14px;
+  border-radius: 8px;
+  font-size: 16px;
+  font-weight: 800;
+}
+.relay-focus-row .relay-next-start {
+  border-color: #218465;
+  background: #218465;
+  color: #fff;
+}
+.relay-focus-row .relay-next-start:hover:not(:disabled) {
+  background: #17694f;
+  border-color: #17694f;
+}
 .pilot-command-panel {
   grid-column: 1 / -1;
   margin: 0;
@@ -164,21 +218,15 @@ button.subtle {
   display: grid;
   gap: 3px;
 }
-.pilot-command-title strong {
-  color: #82aaff;
-  font-size: 22px;
-  font-weight: 800;
-  line-height: 1.2;
-  overflow-wrap: anywhere;
-}
-.message-toggle {
-  grid-column: 1 / -1;
-  justify-self: start;
-  min-height: 34px;
-  padding: 6px 10px;
-}
 .optional-message {
   margin-top: 10px;
+}
+.pilot-command-panel .send-message {
+  flex: 0 0 42px;
+  width: 42px;
+  height: 42px;
+  min-height: 42px;
+  padding: 0;
 }
 .stat,
 .panel {
@@ -873,7 +921,7 @@ button.subtle {
 }
 .qualifying-row {
   display: grid;
-  grid-template-columns: 42px minmax(100px, 1fr) minmax(150px, 1fr) 65px auto auto;
+  grid-template-columns: 42px minmax(100px, 1fr) minmax(150px, 1fr) 65px auto;
   align-items: center;
   gap: 10px;
   padding: 10px 0;
@@ -884,9 +932,14 @@ button.subtle {
   color: #b8c6d8;
   font-variant-numeric: tabular-nums;
 }
-.qualifying-row .outline,
-.qualifying-row .done {
-  padding: 8px 10px;
+.qualifying-row .relay-order-actions button {
+  display: inline-grid;
+  place-items: center;
+  width: 30px;
+  height: 30px;
+}
+.qualifying-row .remove-qualifier {
+  color: #ff7b72;
 }
 .strategy-footer {
   display: flex;
@@ -955,31 +1008,37 @@ button.subtle {
   color: #fff;
 }
 .race-phase-status {
-  display: flex;
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
   align-items: center;
-  justify-content: space-between;
-  gap: 16px;
+  gap: 10px;
   min-width: 0;
 }
-.race-phase-status > div {
+.phase-timer,
+.phase-remaining {
   display: grid;
+  justify-items: center;
+  align-content: center;
   gap: 3px;
   min-width: 0;
+  text-align: center;
 }
-.race-phase-status strong {
-  font-size: 19px;
+.phase-timer strong {
+  font-size: 23px;
   font-variant-numeric: tabular-nums;
 }
-.race-phase-status small {
+.phase-timer small,
+.phase-remaining small {
   color: #91a2ba;
   font-size: 11px;
+  font-weight: 800;
 }
-.phase-timer {
-  display: grid;
-  gap: 3px;
-  min-width: 120px;
+.phase-remaining strong {
+  color: #fff;
+  font-size: 30px;
+  font-variant-numeric: tabular-nums;
 }
-.phase-timer small {
+.race-phase-status .phase-running {
   color: #91a2ba;
   font-size: 10px;
   font-weight: 800;
@@ -1012,11 +1071,17 @@ button.subtle {
     min-width: 0;
   }
   .race-phase-status {
-    align-items: stretch;
+    gap: 6px;
   }
-  .race-phase-status > button {
-    align-self: center;
-    white-space: nowrap;
+  .phase-timer strong {
+    font-size: 20px;
+  }
+  .phase-remaining strong {
+    font-size: 24px;
+  }
+  .phase-timer small,
+  .phase-remaining small {
+    font-size: 9px;
   }
 }
 .race-phase-control {
@@ -1087,6 +1152,9 @@ footer {
   padding: 20px;
   border: 3px solid #607089;
   background: #18283b;
+}
+.driver-view-with-message .signal {
+  min-height: 44dvh;
 }
 .signal:disabled {
   opacity: 1;
@@ -1169,6 +1237,8 @@ footer {
   display: flex;
   flex-direction: column;
   gap: 13px;
+  flex: 1;
+  min-height: 50dvh;
 }
 .driver-note {
   color: #fff;
@@ -1192,33 +1262,105 @@ footer {
   font-weight: 700;
 }
 .driver-bottom {
+  flex: 1;
+  min-height: 50dvh;
   display: grid;
-  grid-template-columns: 0.65fr 1.175fr 1.175fr;
-  gap: 10px;
+  grid-template-columns: minmax(0, 1fr);
+  grid-template-rows: repeat(2, minmax(0, 1fr));
+  gap: 5px;
 }
-.driver-bottom .driver-relay {
-  width: 72%;
-  justify-self: center;
+.driver-bottom.driver-qualifying-metrics {
+  grid-template-rows: minmax(0, 1fr);
+}
+.driver-qualifying-card {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  justify-content: stretch;
+  width: 100%;
+  height: 100%;
+  min-height: 0;
+  padding: 8px;
+  gap: 8px;
+}
+.driver-qualifying-pilot {
+  display: grid;
+  justify-items: center;
+  gap: 2px;
+}
+.driver-qualifying-pilot small {
+  color: #9badc2;
+  font-size: 12px;
+  font-weight: 800;
+}
+.driver-qualifying-pilot strong {
+  color: #fff;
+  font-size: 22px;
+  font-weight: 800;
+}
+.driver-qualifying-clock {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  min-height: 0;
+  border-radius: 10px;
+  background: #0b1828;
+  text-align: center;
+}
+.driver-qualifying-clock small {
+  color: #f5c84b;
+  font-size: 14px;
+  font-weight: 800;
+}
+.driver-qualifying-clock strong {
+  color: #fff;
+  font-size: 72px;
+  font-variant-numeric: tabular-nums;
+  font-weight: 900;
+  line-height: 1;
+}
+.driver-bottom .driver-qualifying-clock strong {
+  font-size: 72px;
 }
 .driver-bottom > div {
+  min-height: 0;
   background: #15263b;
   border-radius: 12px;
-  padding: 12px;
+  padding: 8px 10px;
   text-align: center;
   display: flex;
   flex-direction: column;
+  align-items: center;
+  justify-content: center;
   gap: 6px;
 }
 .driver-bottom small {
-  font-size: 10px;
+  font-size: 13px;
   color: #9badc2;
 }
 .driver-bottom strong {
-  font-size: clamp(21px, 4vw, 42px);
+  font-size: 42px;
   font-variant-numeric: tabular-nums;
+  overflow-wrap: anywhere;
 }
-.driver-bottom .driver-timer strong {
-  font-size: clamp(23px, 6vw, 34px);
+.driver-bottom .driver-pilot-timer strong {
+  font-size: 46px;
+}
+.driver-bottom .driver-global-timer strong {
+  font-size: 68px;
+}
+.driver-bottom .driver-pilot-name {
+  color: #fff;
+  font-size: 22px;
+  font-weight: 800;
+  overflow-wrap: anywhere;
+}
+.driver-bottom .driver-timer-caption {
+  color: #9badc2;
+  font-size: 11px;
+  font-weight: 800;
 }
 .driver-warning {
   font-size: 11px;
@@ -1292,6 +1434,27 @@ footer {
   .stats {
     gap: 8px;
   }
+  .relay-focus-row {
+    grid-template-columns: minmax(0, 2fr) minmax(0, 1fr);
+    gap: 7px;
+    margin-bottom: 8px;
+  }
+  .relay-focus-row.relay-focus-ready {
+    grid-template-columns: minmax(0, 2fr) minmax(0, 1fr);
+  }
+  .relay-focus-row.relay-focus-box-sent {
+    grid-template-columns: minmax(0, 1fr) minmax(0, 2fr);
+  }
+  .relay-focus-row.relay-focus-finish {
+    grid-template-columns: minmax(0, 1fr) minmax(0, 2fr);
+  }
+  .relay-focus-row .stat {
+    padding: 12px 9px;
+  }
+  .relay-focus-row .stat-current strong,
+  .relay-focus-row .stat-next strong {
+    font-size: 21px;
+  }
   .stats .stat-next { order: 1; }
   .stats .stat-remaining { order: 2; }
   .stats .pilot-command-panel { order: 3; }
@@ -1351,10 +1514,6 @@ footer {
     grid-column: 3;
     grid-row: 1 / span 2;
   }
-  .qualifying-row > button {
-    grid-column: 2 / -1;
-    justify-self: start;
-  }
   .strategy-footer {
     align-items: stretch;
     flex-direction: column;
@@ -1375,12 +1534,10 @@ footer {
   .fuel-row button {
     font-size: 11px;
   }
-  .driver-bottom strong {
-    font-size: 18px;
-  }
-  .driver-bottom .driver-timer strong {
-    font-size: clamp(24px, 7.5vw, 36px);
-  }
+  .driver-bottom strong { font-size: 34px; }
+  .driver-bottom .driver-pilot-timer strong { font-size: 40px; }
+  .driver-bottom .driver-global-timer strong { font-size: 52px; }
+  .driver-bottom .driver-pilot-name { font-size: 20px; }
   .driver-view {
     padding: max(8px, env(safe-area-inset-top)) 12px
       max(8px, env(safe-area-inset-bottom));
@@ -1407,6 +1564,13 @@ footer {
       max(12px, env(safe-area-inset-left));
     gap: 8px;
   }
+  .driver-view.driver-view-with-message {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+  .driver-view:not(.driver-view-with-message) {
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-rows: auto 64px minmax(0, 1fr);
+  }
   .driver-meta {
     grid-column: 1 / -1;
   }
@@ -1418,6 +1582,19 @@ footer {
     border-radius: 16px;
     gap: 8px;
   }
+  .driver-view.driver-view-with-message .signal {
+    min-height: 0;
+  }
+  .driver-view:not(.driver-view-with-message) .signal {
+    grid-column: 1;
+    grid-row: 2;
+    min-height: 0;
+    padding: 6px 12px;
+    border-radius: 12px;
+  }
+  .driver-view:not(.driver-view-with-message) .signal-title {
+    font-size: 28px;
+  }
   .signal-title {
     font-size: clamp(50px, 16vh, 88px);
   }
@@ -1428,41 +1605,41 @@ footer {
     justify-content: space-between;
     gap: 6px;
   }
+  .driver-view:not(.driver-view-with-message) .driver-side {
+    grid-column: 1;
+    grid-row: 3;
+    min-height: 0;
+    justify-content: stretch;
+  }
   .driver-note {
     min-height: 0;
     font-size: clamp(13px, 3vh, 18px);
   }
   .driver-bottom {
-    grid-template-columns: 1fr;
-    gap: 6px;
-  }
-  .driver-bottom .driver-relay {
-    width: 64%;
-    justify-self: center;
+    flex: 1;
+    min-height: 0;
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-rows: repeat(2, minmax(0, 1fr));
+    gap: 4px;
   }
   .driver-bottom > div {
-    padding: 7px 10px;
-    flex-direction: row;
+    min-height: 0;
+    padding: 4px 8px;
+    flex-direction: column;
     align-items: center;
-    justify-content: space-between;
+    justify-content: center;
     gap: 10px;
   }
   .driver-bottom small {
     font-size: 9px;
   }
-  .driver-bottom strong {
-    font-size: clamp(16px, 4vh, 24px);
-  }
-  .driver-bottom .driver-relay strong {
-    font-size: clamp(25px, 7vh, 34px);
-  }
-  .driver-bottom > .driver-timer {
-    flex-direction: column;
-    align-items: stretch;
-    padding: 7px;
-  }
-  .driver-bottom .driver-timer strong {
-    font-size: clamp(30px, 9vh, 44px);
+  .driver-bottom .driver-pilot-timer strong {
+    font-size: 30px;
     text-align: center;
   }
+  .driver-bottom .driver-global-timer strong {
+    font-size: 40px;
+    text-align: center;
+  }
+  .driver-bottom .driver-pilot-name { font-size: 18px; }
 }

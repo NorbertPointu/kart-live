@@ -4,12 +4,13 @@ import {
   ArrowDown,
   ArrowUp,
   CalendarClock,
-  Check,
   Clock3,
   Fuel,
   GripVertical,
+  Plus,
   RefreshCw,
   Save,
+  Trash2,
   Users,
 } from "lucide-react";
 import type { DriverInfo, RaceStrategy } from "./model";
@@ -19,6 +20,7 @@ import {
   generateStrategy,
   moveRelay,
   pitWindowAt,
+  removeQualifyingDriver,
   resizeRelay,
   scheduleQualifying,
   validateStrategy,
@@ -86,10 +88,17 @@ export function StrategyPanel({
   );
   const alerts = validateStrategy(draft);
   const driverMap = new Map(drivers.map((driver) => [driver.id, driver]));
+  const nextQualifyingDriver = drivers.find(
+    (driver) => !draft.qualifyingOrder.includes(driver.id),
+  );
   const timeline = useMemo(() => buildStrategyTimeline(draft), [draft]);
 
   function update(patch: Partial<RaceStrategy>) {
     setDraft((current) => ({ ...current, ...patch }));
+  }
+  function addQualifyingDriver() {
+    if (!nextQualifyingDriver) return;
+    update({ qualifyingOrder: [...draft.qualifyingOrder, nextQualifyingDriver.id] });
   }
   function updateWindow(id: string, patch: Partial<RaceStrategy["fuelWindows"][number]>) {
     setDraft((current) => ({
@@ -256,19 +265,35 @@ export function StrategyPanel({
       <section className="panel strategy-panel">
         <div className="panel-title">
           <h2><Users size={19} /> Ordre des qualifications</h2>
-          <span className="pill">{draft.qualifyingKarts} KART(S) EN PARALLÈLE</span>
+          <div className="action-row qualifying-actions">
+            <span className="pill">{draft.qualifyingKarts} KART(S) EN PARALLÈLE</span>
+            <button
+              className="outline"
+              disabled={!canEdit || !nextQualifyingDriver}
+              onClick={addQualifyingDriver}
+            >
+              <Plus size={15} /> Ajouter un pilote
+            </button>
+          </div>
         </div>
         {qualification.map((slot, index) => <div className="qualifying-row" key={`${slot.driver}-${index}`}>
           <strong>#{slot.order}</strong>
           <span>{driverMap.get(slot.driver)?.name ?? slot.driver}</span>
           <time>{new Date(slot.startAt).toLocaleTimeString("fr-FR", { hour: "2-digit", minute: "2-digit" })} – {new Date(slot.endAt).toLocaleTimeString("fr-FR", { hour: "2-digit", minute: "2-digit" })}</time>
           <span>{Math.round(slot.durationMinutes)} min</span>
-          <button className={draft.qualifyingDone.includes(slot.driver) ? "done" : "outline"} disabled={!canEdit} onClick={() => update({ qualifyingDone: draft.qualifyingDone.includes(slot.driver) ? draft.qualifyingDone.filter((id) => id !== slot.driver) : [...draft.qualifyingDone, slot.driver] })}>
-            {draft.qualifyingDone.includes(slot.driver) ? <><Check size={15} /> Terminée</> : "Marquer terminée"}
-          </button>
           <span className="relay-order-actions">
             <button aria-label="Monter dans l'ordre" disabled={!canEdit || index === 0} onClick={() => update({ qualifyingOrder: moveRelay(draft.qualifyingOrder.map((driver) => ({ id: driver, driver, durationMinutes: 1 })), index, index - 1).map((relay) => relay.driver) })}><ArrowUp size={14} /></button>
             <button aria-label="Descendre dans l'ordre" disabled={!canEdit || index === qualification.length - 1} onClick={() => update({ qualifyingOrder: moveRelay(draft.qualifyingOrder.map((driver) => ({ id: driver, driver, durationMinutes: 1 })), index, index + 1).map((relay) => relay.driver) })}><ArrowDown size={14} /></button>
+            <button
+              className="remove-qualifier"
+              aria-label={`Retirer ${driverMap.get(slot.driver)?.name ?? slot.driver} des qualifications`}
+              title="Ne participe pas aux qualifications"
+              disabled={!canEdit || draft.qualifyingOrder.length <= 1}
+              onClick={() => update({
+                qualifyingOrder: removeQualifyingDriver(draft.qualifyingOrder, slot.driver),
+                qualifyingDone: draft.qualifyingDone.filter((driver) => driver !== slot.driver),
+              })}
+            ><Trash2 size={14} /></button>
           </span>
         </div>)}
       </section>

@@ -1,15 +1,21 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { currentPhase } from "./model.ts";
+import { countRaceRelays, currentPhase, defaultConfig, defaultStrategy } from "./model.ts";
 import {
+  assignRelaysToDrivers,
   buildStrategyTimeline,
+  driverToPutOnTrack,
+  firstStrategyRelayDriver,
   generateStrategy,
   moveRelay,
+  nextStrategyRelayDriver,
   nextPlannedDriverAt,
   plannedDriverAt,
   pitWindowAt,
+  removeQualifyingDriver,
   resizeRelay,
   scheduleQualifying,
+  strategyRelayIndex,
   validateStrategy,
 } from "./strategy.ts";
 
@@ -35,6 +41,21 @@ function sampleStrategy(overrides = {}) {
     ...overrides,
   };
 }
+
+test("demo defaults to a four-hour race, four team drivers, three qualifiers, and seven minimum relays", () => {
+  const strategy = defaultStrategy(defaultConfig.drivers.map((driver) => driver.id), 0);
+  assert.equal(strategy.durationMinutes, 240);
+  assert.equal(defaultConfig.drivers.length, 4);
+  assert.equal(strategy.qualifyingOrder.length, 3);
+  assert.equal(strategy.minRelays, 7);
+});
+
+test("counts the active race-start relay alongside completed relays", () => {
+  assert.equal(countRaceRelays({ phase: "race", activeDriver: "a", segments: [] }), 1);
+  assert.equal(countRaceRelays({ phase: "race", activeDriver: "b", segments: [{ phase: "race" }] }), 2);
+  assert.equal(countRaceRelays({ phase: "race", activeDriver: null, segments: [{ phase: "race" }] }), 1);
+  assert.equal(countRaceRelays({ phase: "qualifying", activeDriver: "a", segments: [] }), 0);
+});
 
 test("resolves an active race even when qualification finish status is missing", () => {
   assert.equal(
@@ -78,6 +99,9 @@ test("generates minimum relay count and balances driver time", () => {
   );
   assert.equal(generated.relays.length, 4);
   assert.equal(generated.relays.reduce((sum, relay) => sum + relay.durationMinutes, 0), 90);
+  assert.ok(generated.relays.every((relay, index) =>
+    index === 0 || relay.driver !== generated.relays[index - 1].driver,
+  ));
   const driverTotals = ["a", "b", "c"].map((id) =>
     generated.relays.filter((relay) => relay.driver === id).reduce((sum, relay) => sum + relay.durationMinutes, 0),
   );
@@ -152,6 +176,24 @@ test("selects the next strategy pilot for qualification and race", () => {
   assert.equal(nextPlannedDriverAt(strategy, "race", 35 * 60_000, null, 0), "c");
 });
 
+test("shows the next qualifying driver before start even when scheduled slots have passed", () => {
+  const strategy = sampleStrategy({ qualifyingOrder: ["a", "b", "c", "d"] });
+  assert.equal(
+    nextPlannedDriverAt(strategy, "qualifying", 12 * 60 * 60_000, null, null),
+    "b",
+  );
+  assert.equal(
+    nextPlannedDriverAt(
+      sampleStrategy({ qualifyingOrder: ["a", "b", "c", "d"], qualifyingDone: ["a"] }),
+      "qualifying",
+      12 * 60 * 60_000,
+      null,
+      null,
+    ),
+    "c",
+  );
+});
+
 test("keeps the planned current driver through a pit stop and selects the following relay", () => {
   const strategy = sampleStrategy({
     fuelWindows: [
@@ -166,4 +208,36 @@ test("shows distinct first and next race drivers before the start", () => {
   const strategy = sampleStrategy();
   assert.equal(plannedDriverAt(strategy, "race", 0, null, null), "a");
   assert.equal(nextPlannedDriverAt(strategy, "race", 0, null, null), "b");
+  assert.equal(firstStrategyRelayDriver(strategy), "a");
+  assert.equal(firstStrategyRelayDriver(sampleStrategy({ relays: [] })), null);
+});
+
+test("advances from the actual active strategy pilot even with no earlier segment", () => {
+  const strategy = sampleStrategy();
+  assert.equal(strategyRelayIndex(strategy, 0, "a"), 0);
+  assert.equal(strategyRelayIndex(strategy, 0, "b"), 1);
+  assert.equal(nextStrategyRelayDriver(strategy, 0, "b"), "c");
+  assert.equal(nextStrategyRelayDriver(strategy, 1, null), "b");
+  assert.equal(nextStrategyRelayDriver(strategy, 1, "b"), "c");
+});
+
+test("puts the current planned race pilot on track before advancing to the next relay", () => {
+  assert.equal(driverToPutOnTrack("race", false, false, "a", "b"), "a");
+  assert.equal(driverToPutOnTrack("race", true, false, "a", "b"), "b");
+  assert.equal(driverToPutOnTrack("race", false, true, "a", "b"), "b");
+  assert.equal(driverToPutOnTrack("qualifying", false, false, "a", "b"), "b");
+});
+
+test("removes a driver from qualification order but never removes the last driver", () => {
+  assert.deepEqual(removeQualifyingDriver(["a", "b", "c"], "b"), ["a", "c"]);
+  assert.throws(() => removeQualifyingDriver(["a"], "a"), /au moins un pilote/);
+});
+
+test("reassigns course relays to the selected race roster without changing timing", () => {
+  const relays = sampleStrategy().relays;
+  const reassigned = assignRelaysToDrivers(relays, ["b", "c"]);
+  assert.deepEqual(reassigned.map((relay) => relay.id), relays.map((relay) => relay.id));
+  assert.deepEqual(reassigned.map((relay) => relay.durationMinutes), relays.map((relay) => relay.durationMinutes));
+  assert.ok(reassigned.every((relay) => ["b", "c"].includes(relay.driver)));
+  assert.throws(() => assignRelaysToDrivers(relays, []), /au moins un pilote/);
 });
