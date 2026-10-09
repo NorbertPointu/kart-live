@@ -614,6 +614,9 @@ footer {
   border: 3px solid #607089;
   background: #18283b;
 }
+.signal:disabled {
+  opacity: 1;
+}
 .signal-title {
   max-width: 100%;
   font-size: clamp(68px, 15vw, 190px);
