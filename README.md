@@ -1,52 +1,104 @@
-# Kart Live — MVP déployable
+# Kart Live — Déploiement Firebase Hosting
 
-Application React/TypeScript pour une endurance de karting : écran pilote passif, commandes depuis les stands, temps de roulage effectif, relais, ravitaillements et synchronisation Firestore.
+Application React + TypeScript + Vite, avec Firestore pour les messages temps réel et Firebase Authentication pour les accès.
 
-## Démarrage immédiat (mode démo)
+## 1. Prérequis
+
+- Node.js 20 ou plus récent, npm et un compte Google.
+- Créer un projet dans https://console.firebase.google.com/.
+- Dans **Paramètres du projet > Vos applications**, enregistrer une application **Web** et relever `apiKey`, `authDomain`, `projectId`, `appId`.
+
+## 2. Activer les services Firebase
+
+1. **Authentication > Sign-in method** : activer **E-mail/Mot de passe** et **Anonyme**.
+2. **Authentication > Users** : créer le compte de l'administrateur du stand et copier son **UID**.
+3. **Firestore Database** : créer la base `(default)` en mode production, dans une région appropriée.
+4. Ouvrir `firestore.rules` et remplacer `REPLACE_WITH_ADMIN_UID` par l'UID exact du compte administrateur.
+
+Les règles du projet autorisent la lecture aux utilisateurs authentifiés (y compris anonymes) et l'écriture uniquement au compte administrateur. Ne jamais déployer avec des règles ouvertes (`allow write: if true`). Ne pas enregistrer de données sensibles dans l'événement.
+
+## 3. Configurer l'application
+
+Depuis le répertoire `kart-live` :
 
 ```bash
 npm install
-npm run dev
+cp .env.example .env.local
 ```
 
-Ouvrir `http://localhost:5173` (stand) et `http://localhost:5173/driver` (pilote). Sans variables Firebase, les données restent locales et sont partagées **uniquement entre onglets d'un même navigateur/origine**. Ce mode ne synchronise **pas** deux téléphones.
+Renseigner `.env.local` avec les valeurs de l'application Web Firebase :
 
-## Mise en production multi-appareils
+```dotenv
+VITE_FIREBASE_API_KEY=...
+VITE_FIREBASE_AUTH_DOMAIN=TON-PROJET.firebaseapp.com
+VITE_FIREBASE_PROJECT_ID=TON-PROJET
+VITE_FIREBASE_APP_ID=...
+VITE_EVENT_ID=lille-endurance-2026
+```
 
-1. Créer un projet sur https://console.firebase.google.com/ et ajouter une application Web.
-2. Activer **Authentication → Sign-in method → Email/Password** et **Anonymous**.
-3. Créer un compte administrateur Email/Password dans **Authentication → Users** ; copier son **UID**.
-4. Créer une base **Cloud Firestore** en mode production. Copier `firestore.rules`, remplacer `REPLACE_WITH_ADMIN_UID` par le UID exact de l'administrateur, puis **publier les règles**. **Ne jamais utiliser des règles `allow write: if true`**.
-5. Copier `.env.example` en `.env.local` et remplir les valeurs Firebase (Firebase → Project settings → Your apps → SDK setup). Le champ `VITE_EVENT_ID` doit être un identifiant simple, identique sur tous les appareils.
-6. `npm install && npm run build`. Sur Vercel, importer le dépôt GitHub, choisir Vite et renseigner les variables `VITE_*` dans les paramètres du projet. Déployer. Pour les URLs `/driver`, le fichier `vercel.json` gère le fallback SPA.
-7. Depuis `/`, se connecter avec le compte administrateur, initialiser les données en cliquant sur **Réinitialiser la course** puis **Confirmer**. Cette opération crée le document Firestore `events/{VITE_EVENT_ID}`. Ouvrir ensuite `/driver` sur le téléphone pilote : il se connecte anonymement et reçoit les messages.
-8. Tester sur deux téléphones **réels** et sur le réseau mobile du circuit. Vérifier la réception des consignes, l'expiration des messages et les coupures de connexion.
+Les variables `VITE_*` sont intégrées au bundle client : ce ne sont pas des secrets. La sécurité repose sur Authentication et les règles Firestore. Ne pas versionner `.env.local`.
 
-### Important : confidentialité et sécurité
+## 4. Installer Firebase CLI et associer le projet
 
-- Le compte administrateur est seul autorisé à écrire. Les terminaux pilotes anonymes peuvent lire l'état de l'événement.
-- Les données sont visibles par **tout utilisateur authentifié** du projet Firebase, y compris les connexions anonymes. Ne pas y placer d'informations privées. Pour un accès lecture restreint à l'équipe, ajouter un mécanisme d'invitation/authentification par utilisateur.
-- La variable `VITE_*` n'est **pas secrète** : la sécurité repose sur les règles Firestore et l'authentification.
-- Les commandes expirent au bout de 120 secondes sur l'interface pilote. Le témoin SYNC LIVE indique la connexion du client Firestore, **pas** que le pilote a lu la consigne.
-- Si la connexion tombe, la dernière consigne peut rester visible jusqu'à son expiration : le dispositif ne doit jamais remplacer les signaux officiels de piste.
-- Le mode administrateur est réservé au stand. Ne pas se connecter comme administrateur sur le téléphone pilote.
+```bash
+npm install -g firebase-tools
+firebase login
+firebase use --add
+```
 
-## Utilisation pendant la course
+Sélectionner le projet Firebase existant et lui donner un alias, par exemple `default`. Si la commande `firebase use --add` ne fonctionne pas, utiliser `firebase use --project TON-PROJET` ou `firebase deploy --project TON-PROJET`.
 
-- En qualifications, sélectionner « Qualifications » et démarrer un pilote. À son retour, cliquer sur « Entrée au stand / fin du relais ». Répéter.
-- Avant la course, sélectionner « Course », cliquer sur « Départ course » à l'heure réelle du départ puis « Début relais » pour le premier pilote.
-- À chaque changement, arrêter le relais **à l'entrée au stand** et démarrer le suivant **à la sortie du stand**. Le temps passé aux stands est donc exclu des temps de roulage.
-- Marquer les ravitaillements comme effectués uniquement après confirmation du plein. L'application n'automatise pas leur détection.
-- À l'arrivée, cliquer sur « Arrivée ». Les temps cumulés qualifications + course permettent d'équilibrer les pilotes.
+Les fichiers `firebase.json` et `firestore.rules` sont déjà fournis. `firebase.json` définit `dist` comme répertoire publié, une réécriture SPA pour `/driver`, et le chemin des règles Firestore.
 
-## Limitations de ce MVP
+## 5. Compiler et déployer
 
-- Les 7 changements sont un objectif **à vérifier manuellement** : le compteur est indicatif, notamment lors de séquences interrompues ou de qualifications.
-- Les temps de qualification incluent les déplacements d'entrée/sortie si le stand ne clique pas précisément au passage de la ligne choisie.
-- La synchronisation est « temps réel réseau », **sans garantie de latence maximale** et sans accusé de lecture humain.
-- Pas de gestion multi-équipes, ni de chronométrage automatique au tour, ni de radar météo.
-- Les horaires des fenêtres de ravitaillement sont affichés, mais pas bloqués automatiquement.
+```bash
+npm run build
+firebase deploy --only hosting,firestore:rules
+```
 
-## Sécurité sur piste
+Si la compilation échoue, corriger les erreurs avant le déploiement. L'application sera disponible à :
 
-**Autorisation écrite ou explicite du circuit indispensable** pour le smartphone et sa fixation. Fixation sûre sans risque de chute, de contact avec la direction, les commandes ou le pilote. Affichage passif seulement : **aucune manipulation en roulant**. En cas de doute, utiliser un panneau visible depuis les stands.
+- `https://TON-PROJET.web.app/` — stand
+- `https://TON-PROJET.web.app/driver` — pilote
+
+Pour les déploiements suivants :
+
+```bash
+npm run build
+firebase deploy --only hosting
+```
+
+Redéployer `firestore:rules` si les règles changent. La publication des règles peut prendre un court délai avant d'être effective.
+
+## 6. Initialiser et tester
+
+1. Ouvrir `/` et se connecter avec l'e-mail/mot de passe administrateur.
+2. Initialiser la course avec **Réinitialiser la course**, puis **Confirmer**. Cela crée `events/{VITE_EVENT_ID}`.
+3. Ouvrir `/driver` sur un autre téléphone. L'authentification anonyme permet la lecture.
+4. Envoyer `BOX`, `PUSH`, `STAY OUT` depuis le stand et vérifier la réception en temps réel.
+5. Tester en réseau mobile, téléphone verrouillé/déverrouillé, et lors d'une perte de connexion. Ne jamais présumer qu'une consigne a été lue.
+
+## 7. Chronométrage de course
+
+- Qualifications : A 10 min, B 5 min, C 5 min, D 0 min (plan initial, ajustable).
+- Course : 10h35–14h35 ; 7 changements de pilote minimum.
+- Ravitaillement 1 : 11h50–12h20 ; ravitaillement 2 : 13h05–13h35.
+- Pour exclure les arrêts du temps de roulage, arrêter le relais à l'entrée aux stands et démarrer le suivant à la sortie.
+- Les temps réels d'attente et de ravitaillement doivent être relevés ; le compteur ne remplace pas le chronométrage officiel.
+
+## 8. Sécurité et limites
+
+- **Obtenir l'autorisation explicite de Lille Karting** avant de fixer un téléphone au kart.
+- Fixation sûre, sans gêner les commandes ni la visibilité ; aucune manipulation en roulant.
+- La connexion temps réel dépend du réseau ; les consignes peuvent être retardées ou perdues.
+- L'interface pilote ne prouve pas que le pilote a vu le message ; les consignes officielles du circuit restent prioritaires.
+- En mode sans Firebase, le fonctionnement local n'est pas synchronisé entre deux appareils.
+- MVP non testé en conditions réelles ; valider le build et faire une répétition avant la course.
+
+## Dépannage
+
+- **Page blanche sur `/driver`** : vérifier le `rewrites` SPA de `firebase.json`, puis redéployer Hosting.
+- **`permission-denied` Firestore** : vérifier UID administrateur, règles publiées, Authentication activé et bon projet.
+- **Données non synchronisées** : vérifier `.env.local`, `VITE_EVENT_ID`, accès réseau et connexion Firebase des deux appareils.
+- **Ancienne version visible** : recompiler avec `npm run build` avant `firebase deploy`.

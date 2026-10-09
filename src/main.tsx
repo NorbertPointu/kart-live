@@ -1,49 +1,663 @@
-import React,{useEffect,useState} from 'react';
-import{createRoot}from'react-dom/client';
-import{onAuthStateChanged,signInAnonymously,signInWithEmailAndPassword,signOut,User}from'firebase/auth';
-import{doc,onSnapshot,setDoc}from'firebase/firestore';
-import{auth,configured,db,eventId}from'./firebase';
-import{clock,closeSegment,drivers,EventState,format,initial,Signal,totals,Driver,Phase}from'./model';
-import{Flag,Radio,Clock3,Users,ShieldCheck,Wifi,WifiOff,Fuel,RotateCcw,LogIn,LogOut,Pause,Play,Send}from'lucide-react';
-import './style.css';
-const KEY='kart-live-demo-v1';
-const channel=typeof BroadcastChannel!=='undefined'?new BroadcastChannel(KEY):null;
-function App(){
- const[role,setRole]=useState<'stand'|'driver'>(location.pathname.startsWith('/driver')?'driver':'stand');
- const[state,setState]=useState<EventState>(initial);const[now,setNow]=useState(Date.now());
- const[user,setUser]=useState<User|null>(null);const[online,setOnline]=useState(!configured);const[email,setEmail]=useState('');const[password,setPassword]=useState('');const[error,setError]=useState('');
- const[message,setMessage]=useState('');const[qual,setQual]=useState<Phase>('race');
- const[admin,setAdmin]=useState(false);const[confirmReset,setConfirmReset]=useState(false);
- useEffect(()=>{const id=setInterval(()=>setNow(Date.now()),250);return()=>clearInterval(id)},[]);
- useEffect(()=>{if(!configured){try{const saved=localStorage.getItem(KEY);if(saved)setState(JSON.parse(saved) as EventState)}catch{}const listener=(e:MessageEvent)=>setState(e.data as EventState);channel?.addEventListener('message',listener);const storage=(e:StorageEvent)=>{if(e.key===KEY&&e.newValue)try{setState(JSON.parse(e.newValue) as EventState)}catch{}};window.addEventListener('storage',storage);return()=>{channel?.removeEventListener('message',listener);window.removeEventListener('storage',storage)}}
- const unsub=onAuthStateChanged(auth!,async u=>{setUser(u);setAdmin(Boolean(u&&!u.isAnonymous));if(!u&&location.pathname.startsWith('/driver'))try{await signInAnonymously(auth!)}catch(e){setError(String(e))}});return()=>unsub()},[]);
- useEffect(()=>{if(!configured||!user)return;const ref=doc(db!,'events',eventId);return onSnapshot(ref,snap=>{setOnline(true);if(snap.exists())setState(snap.data() as EventState);else setState(initial)},()=>setOnline(false))},[user]);
- async function save(next:EventState){if(configured&&!admin){setError('Connexion administrateur requise pour modifier la course.');return}const updated={...next,updatedAt:Date.now()};if(configured){try{await setDoc(doc(db!,'events',eventId),updated)}catch(e){setError(`Enregistrement impossible : ${String(e)}`)}}else{setState(updated);localStorage.setItem(KEY,JSON.stringify(updated));channel?.postMessage(updated)}}
- const activeMs=state.activeSince!==null&&state.activeDriver?now-state.activeSince:0;
- const elapsed=state.startAt!==null?Math.min(now,state.finishAt??Infinity)-state.startAt:0;
- const total=totals(state,now);
- const effectiveSignal=now>state.signalExpiresAt?'READY':state.signal;
- const canEdit=!configured||admin;
- function start(driver:Driver){const t=Date.now();const closed=closeSegment(state,t);void save({...closed,activeDriver:driver,activeSince:t,pitSince:null,signal:'READY',signalExpiresAt:0,phase:qual});}
- function pit(){const t=Date.now();const closed=closeSegment(state,t);void save({...closed,pitSince:t,signal:'READY',signalExpiresAt:0});}
- function send(signal:Signal){const t=Date.now();void save({...state,signal,message:message.trim().slice(0,80),signalAt:t,signalExpiresAt:t+120000});}
- function goRole(r:'stand'|'driver'){history.pushState({},'',r==='driver'?'/driver':'/');setRole(r)}
- async function login(e:React.FormEvent){e.preventDefault();setError('');try{await signInWithEmailAndPassword(auth!,email,password);setPassword('')}catch{setError('Identifiants invalides ou connexion indisponible.')}}
- const fuel1Window=now>=new Date().setHours(11,50,0,0)&&now<=new Date().setHours(12,20,0,0);
- const fuel2Window=now>=new Date().setHours(13,5,0,0)&&now<=new Date().setHours(13,35,0,0);
- return <div className={`app ${role==='driver'?'driver-app':''}`}>
- <header className="topbar"><div className="brand"><Flag size={25}/><span>KART<span className="accent">LIVE</span></span><small>ENDURANCE</small></div><div className="top-actions"><span className={`connection ${online?'good':'bad'}`}>{online?<Wifi size={15}/>:<WifiOff size={15}/>} {configured?(online?'SYNC LIVE':'HORS LIGNE'):'DÉMO LOCALE'}</span><button className="subtle" onClick={()=>goRole(role==='driver'?'stand':'driver')}>{role==='driver'?'Vue stand':'Vue pilote'}</button></div></header>
- {role==='driver'?<main className="driver-view"><div className="driver-meta"><span>MESSAGE DU STAND</span><span>REÇU {state.signalAt?clock(state.signalAt):'—'}</span></div><div className={`signal signal-${effectiveSignal.replace(' ','-')}`}><span className="signal-title">{effectiveSignal==='READY'?'EN ATTENTE':effectiveSignal}</span><span className="signal-desc">{effectiveSignal==='BOX'?'RENTRE AUX STANDS':effectiveSignal==='PUSH'?'ACCÉLÈRE SI POSSIBLE':effectiveSignal==='STAY OUT'?'RESTE EN PISTE':effectiveSignal==='SLOW'?'RALENTIS / PRUDENCE':effectiveSignal==='CLEAR'?'PISTE LIBRE':'EN ATTENTE DES CONSIGNES'}</span></div><div className="driver-note">{effectiveSignal!=='READY'&&state.message?state.message:'Ne manipule pas le téléphone en roulant.'}</div><div className="driver-bottom"><div><small>PILOTE</small><strong>{state.activeDriver||'—'}</strong></div><div><small>RELAIS EN COURS</small><strong>{format(activeMs)}</strong></div><div><small>COURSE</small><strong>{format(elapsed)}</strong></div></div><p className="driver-warning">Affichage passif uniquement · Fixation et utilisation soumises à l’autorisation du circuit.</p></main>:<main className="dashboard">
- <div className="heading"><div><p className="eyebrow">LILLE KARTING · 900 M · 20 ÉQUIPES</p><h1>Centre de course</h1><p className="muted">10h35 — 14h35 · 4 heures · 7 changements minimum</p></div><div className="right-head">{configured&&!admin?<button className="primary" onClick={()=>document.getElementById('login')?.scrollIntoView({behavior:'smooth'})}><LogIn size={16}/> Connexion stand</button>:<span className="pill"><ShieldCheck size={15}/> {configured?'ADMIN':'MODE DÉMO'}</span>}</div></div>
- {error&&<div className="error">{error}<button onClick={()=>setError('')}>×</button></div>}
- <section className="stats"><article className="stat"><span><Clock3 size={17}/> TEMPS DE COURSE</span><strong>{format(elapsed)}</strong><small>{state.startAt?'Chronomètre lancé':'Prêt pour le départ'}</small></article><article className="stat"><span><Users size={17}/> PILOTE ACTUEL</span><strong>{state.activeDriver||'—'}</strong><small>{state.activeDriver?`Roulage : ${format(activeMs)}`:state.pitSince?'Kart aux stands':'Aucun pilote actif'}</small></article><article className="stat"><span><RotateCcw size={17}/> CHANGEMENTS</span><strong>{Math.max(0,state.segments.filter(x=>x.phase==='race').length-(state.activeDriver?0:1))} <em>/ 7 min.</em></strong><small>Compteur indicatif</small></article><article className="stat"><span><Fuel size={17}/> RAVITAILLEMENTS</span><strong>{Number(state.fuel1)+Number(state.fuel2)} <em>/ 2</em></strong><small>Deux postes de plein</small></article></section>
- <section className="columns"><div className="stack"><article className="panel"><div className="panel-title"><h2><Radio size={19}/> Consignes au pilote</h2><span className="pill">{state.activeDriver?`PILOTE ${state.activeDriver}`:'EN ATTENTE'}</span></div><div className="commands"><button disabled={!canEdit} className="command boxcmd" onClick={()=>send('BOX')}>BOX <small>RENTRE</small></button><button disabled={!canEdit} className="command pushcmd" onClick={()=>send('PUSH')}>PUSH <small>ATTAQUE</small></button><button disabled={!canEdit} className="command staycmd" onClick={()=>send('STAY OUT')}>STAY OUT <small>CONTINUE</small></button><button disabled={!canEdit} className="command slowcmd" onClick={()=>send('SLOW')}>SLOW <small>PRUDENCE</small></button></div><div className="input-row"><input disabled={!canEdit} placeholder="Message facultatif (80 caractères)" value={message} maxLength={80} onChange={e=>setMessage(e.target.value)}/><button disabled={!canEdit} className="outline" onClick={()=>send('CLEAR')}><Send size={16}/> CLEAR</button></div><p className="muted tiny">Les consignes expirent après 2 minutes. Elles ne remplacent jamais les drapeaux et instructions des commissaires.</p></article>
- <article className="panel"><div className="panel-title"><h2><Play size={19}/> Gestion des relais</h2></div><div className="input-row"><label>Type de session</label><select disabled={!canEdit} value={qual} onChange={e=>setQual(e.target.value as Phase)}><option value="qualifying">Qualifications</option><option value="race">Course</option></select></div><div className="driver-buttons">{drivers.map(d=><button key={d} disabled={!canEdit||Boolean(state.activeDriver)} onClick={()=>start(d)} className="driver-btn"><strong>{d}</strong><small>Début relais</small></button>)}</div><div className="action-row"><button disabled={!canEdit||!state.activeDriver} className="outline" onClick={pit}><Pause size={17}/> Entrée au stand / fin du relais</button><button disabled={!canEdit||Boolean(state.startAt)} className="outline" onClick={()=>save({...state,startAt:Date.now(),finishAt:null})}><Clock3 size={17}/> Départ course</button><button disabled={!canEdit||!state.startAt||Boolean(state.finishAt)} className="outline" onClick={()=>save({...closeSegment(state,Date.now()),finishAt:Date.now(),pitSince:Date.now()})}><Flag size={17}/> Arrivée</button></div><p className="muted tiny">À l'entrée au stand, arrête le relais. Démarre le suivant à la sortie du stand : l'immobilisation n'est pas comptée comme roulage.</p></article></div>
- <div className="stack"><article className="panel"><div className="panel-title"><h2><Users size={19}/> Temps de roulage</h2><span className="pill">ÉGALITÉ</span></div><p className="muted tiny">Qualifications + course · objectif : même temps pour chacun</p>{drivers.map(d=>{const ms=total[d].qualifying+total[d].race;const max=Math.max(1,...drivers.map(x=>total[x].qualifying+total[x].race));return <div className="driver-total" key={d}><div className="total-line"><strong>Pilote {d}</strong><span>{format(ms)}</span></div><div className="track"><div className="fill" style={{width:`${ms/max*100}%`}}/></div><small>Qualif {format(total[d].qualifying)} · Course {format(total[d].race)}</small></div>})}<div className="balance">Écart max : {format(Math.max(...drivers.map(d=>total[d].qualifying+total[d].race))-Math.min(...drivers.map(d=>total[d].qualifying+total[d].race)))}</div></article>
- <article className="panel"><div className="panel-title"><h2><Fuel size={19}/> Ravitaillements</h2></div><div className="fuel-row"><div><strong>Ravitaillement 1</strong><small>11h50 – 12h20</small></div><button disabled={!canEdit} className={state.fuel1?'done':'outline'} onClick={()=>save({...state,fuel1:!state.fuel1})}>{state.fuel1?'✓ Effectué':'Marquer effectué'}</button></div><div className="fuel-row"><div><strong>Ravitaillement 2</strong><small>13h05 – 13h35</small></div><button disabled={!canEdit} className={state.fuel2?'done':'outline'} onClick={()=>save({...state,fuel2:!state.fuel2})}>{state.fuel2?'✓ Effectué':'Marquer effectué'}</button></div><p className="muted tiny">Fenêtres horaires officielles. Les indicateurs ne prouvent pas qu'un plein a été réalisé. {fuel1Window?'Fenêtre 1 en cours.':fuel2Window?'Fenêtre 2 en cours.':''}</p></article>
- <article className="panel"><div className="panel-title"><h2><Clock3 size={19}/> Historique des relais</h2></div><div className="history">{state.segments.length?state.segments.slice().reverse().map(s=><div key={s.id}><strong>{s.driver}</strong><span>{s.phase==='race'?'Course':'Qualifs'}</span><span>{clock(s.start)} → {clock(s.end)}</span><b>{format(s.end-s.start)}</b></div>):<p className="muted">Aucun relais terminé.</p>}</div></article></div></section>
- <section className="panel bottom-panel"><h2>Administration</h2>{configured&&!admin?<form id="login" className="login" onSubmit={login}><input type="email" placeholder="Email administrateur" required value={email} onChange={e=>setEmail(e.target.value)}/><input type="password" placeholder="Mot de passe" required value={password} onChange={e=>setPassword(e.target.value)}/><button className="primary" type="submit"><LogIn size={16}/> Connexion</button></form>:<div className="action-row"><button className="outline" onClick={()=>setConfirmReset(!confirmReset)}><RotateCcw size={16}/> Réinitialiser la course</button>{configured&&<button className="outline" onClick={()=>signOut(auth!)}><LogOut size={16}/> Déconnexion</button>}{confirmReset&&<button className="danger" onClick={()=>{void save({...initial,updatedAt:Date.now()});setConfirmReset(false)}}>Confirmer la réinitialisation</button>}</div>}<p className="muted tiny">{configured?'Mode Firebase : données synchronisées entre appareils authentifiés.':'Mode démonstration : les données restent dans ce navigateur et se synchronisent seulement entre onglets de la même origine.'}</p></section>
- </main>}
- <footer>KART LIVE · Application d'assistance — respectez toujours les consignes de sécurité du circuit.</footer></div>
+import React, { useEffect, useState } from "react";
+import { createRoot } from "react-dom/client";
+import {
+  onAuthStateChanged,
+  signInAnonymously,
+  signInWithEmailAndPassword,
+  signOut,
+  User,
+} from "firebase/auth";
+import { doc, onSnapshot, setDoc } from "firebase/firestore";
+import { auth, configured, db, eventId } from "./firebase";
+import {
+  clock,
+  closeSegment,
+  drivers,
+  EventState,
+  format,
+  initial,
+  Signal,
+  totals,
+  Driver,
+  Phase,
+} from "./model";
+import {
+  Flag,
+  Radio,
+  Clock3,
+  Users,
+  ShieldCheck,
+  Wifi,
+  WifiOff,
+  Fuel,
+  RotateCcw,
+  LogIn,
+  LogOut,
+  Pause,
+  Play,
+  Send,
+} from "lucide-react";
+import "./style.css";
+const KEY = "kart-live-demo-v1";
+const channel =
+  typeof BroadcastChannel !== "undefined" ? new BroadcastChannel(KEY) : null;
+function App() {
+  const [role, setRole] = useState<"stand" | "driver">(
+    location.pathname.startsWith("/driver") ? "driver" : "stand",
+  );
+  const [state, setState] = useState<EventState>(initial);
+  const [now, setNow] = useState(Date.now());
+  const [user, setUser] = useState<User | null>(null);
+  const [online, setOnline] = useState(!configured);
+  const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
+  const [error, setError] = useState("");
+  const [message, setMessage] = useState("");
+  const [qual, setQual] = useState<Phase>("race");
+  const [admin, setAdmin] = useState(false);
+  const [confirmReset, setConfirmReset] = useState(false);
+  useEffect(() => {
+    const id = setInterval(() => setNow(Date.now()), 250);
+    return () => clearInterval(id);
+  }, []);
+  useEffect(() => {
+    if (!configured) {
+      try {
+        const saved = localStorage.getItem(KEY);
+        if (saved) setState(JSON.parse(saved) as EventState);
+      } catch {}
+      const listener = (e: MessageEvent) => setState(e.data as EventState);
+      channel?.addEventListener("message", listener);
+      const storage = (e: StorageEvent) => {
+        if (e.key === KEY && e.newValue)
+          try {
+            setState(JSON.parse(e.newValue) as EventState);
+          } catch {}
+      };
+      window.addEventListener("storage", storage);
+      return () => {
+        channel?.removeEventListener("message", listener);
+        window.removeEventListener("storage", storage);
+      };
+    }
+    const unsub = onAuthStateChanged(auth!, async (u) => {
+      setUser(u);
+      setAdmin(Boolean(u && !u.isAnonymous));
+      if (!u && location.pathname.startsWith("/driver"))
+        try {
+          await signInAnonymously(auth!);
+        } catch (e) {
+          setError(String(e));
+        }
+    });
+    return () => unsub();
+  }, []);
+  useEffect(() => {
+    if (!configured || !user) return;
+    const ref = doc(db!, "events", eventId);
+    return onSnapshot(
+      ref,
+      (snap) => {
+        setOnline(true);
+        if (snap.exists()) setState(snap.data() as EventState);
+        else setState(initial);
+      },
+      () => setOnline(false),
+    );
+  }, [user]);
+  async function save(next: EventState) {
+    if (configured && !admin) {
+      setError("Connexion administrateur requise pour modifier la course.");
+      return;
+    }
+    const updated = { ...next, updatedAt: Date.now() };
+    if (configured) {
+      try {
+        await setDoc(doc(db!, "events", eventId), updated);
+      } catch (e) {
+        setError(`Enregistrement impossible : ${String(e)}`);
+      }
+    } else {
+      setState(updated);
+      localStorage.setItem(KEY, JSON.stringify(updated));
+      channel?.postMessage(updated);
+    }
+  }
+  const activeMs =
+    state.activeSince !== null && state.activeDriver
+      ? now - state.activeSince
+      : 0;
+  const elapsed =
+    state.startAt !== null
+      ? Math.min(now, state.finishAt ?? Infinity) - state.startAt
+      : 0;
+  const total = totals(state, now);
+  const effectiveSignal = now > state.signalExpiresAt ? "READY" : state.signal;
+  const canEdit = !configured || admin;
+  function start(driver: Driver) {
+    const t = Date.now();
+    const closed = closeSegment(state, t);
+    void save({
+      ...closed,
+      activeDriver: driver,
+      activeSince: t,
+      pitSince: null,
+      signal: "READY",
+      signalExpiresAt: 0,
+      phase: qual,
+    });
+  }
+  function pit() {
+    const t = Date.now();
+    const closed = closeSegment(state, t);
+    void save({ ...closed, pitSince: t, signal: "READY", signalExpiresAt: 0 });
+  }
+  function send(signal: Signal) {
+    const t = Date.now();
+    void save({
+      ...state,
+      signal,
+      message: message.trim().slice(0, 80),
+      signalAt: t,
+      signalExpiresAt: t + 120000,
+    });
+  }
+  function goRole(r: "stand" | "driver") {
+    history.pushState({}, "", r === "driver" ? "/driver" : "/");
+    setRole(r);
+  }
+  async function login(e: React.FormEvent) {
+    e.preventDefault();
+    setError("");
+    try {
+      await signInWithEmailAndPassword(auth!, email, password);
+      setPassword("");
+    } catch {
+      setError("Identifiants invalides ou connexion indisponible.");
+    }
+  }
+  const fuel1Window =
+    now >= new Date().setHours(11, 50, 0, 0) &&
+    now <= new Date().setHours(12, 20, 0, 0);
+  const fuel2Window =
+    now >= new Date().setHours(13, 5, 0, 0) &&
+    now <= new Date().setHours(13, 35, 0, 0);
+  return (
+    <div className={`app ${role === "driver" ? "driver-app" : ""}`}>
+      <header className="topbar">
+        <div className="brand">
+          <Flag size={25} />
+          <span>
+            KART<span className="accent">LIVE</span>
+          </span>
+          <small>ENDURANCE</small>
+        </div>
+        <div className="top-actions">
+          <span className={`connection ${online ? "good" : "bad"}`}>
+            {online ? <Wifi size={15} /> : <WifiOff size={15} />}{" "}
+            {configured ? (online ? "SYNC LIVE" : "HORS LIGNE") : "DÉMO LOCALE"}
+          </span>
+          <button
+            className="subtle"
+            onClick={() => goRole(role === "driver" ? "stand" : "driver")}
+          >
+            {role === "driver" ? "Vue stand" : "Vue pilote"}
+          </button>
+        </div>
+      </header>
+      {role === "driver" ? (
+        <main className="driver-view">
+          <div className="driver-meta">
+            <span>MESSAGE DU STAND</span>
+            <span>REÇU {state.signalAt ? clock(state.signalAt) : "—"}</span>
+          </div>
+          <div className={`signal signal-${effectiveSignal.replace(" ", "-")}`}>
+            <span className="signal-title">
+              {effectiveSignal === "READY" ? "EN ATTENTE" : effectiveSignal}
+            </span>
+            <span className="signal-desc">
+              {effectiveSignal === "BOX"
+                ? "RENTRE AUX STANDS"
+                : effectiveSignal === "PUSH"
+                  ? "ACCÉLÈRE SI POSSIBLE"
+                  : effectiveSignal === "STAY OUT"
+                    ? "RESTE EN PISTE"
+                    : effectiveSignal === "SLOW"
+                      ? "RALENTIS / PRUDENCE"
+                      : effectiveSignal === "CLEAR"
+                        ? "PISTE LIBRE"
+                        : "EN ATTENTE DES CONSIGNES"}
+            </span>
+          </div>
+          <div className="driver-note">
+            {effectiveSignal !== "READY" && state.message
+              ? state.message
+              : "Ne manipule pas le téléphone en roulant."}
+          </div>
+          <div className="driver-bottom">
+            <div>
+              <small>PILOTE</small>
+              <strong>{state.activeDriver || "—"}</strong>
+            </div>
+            <div>
+              <small>RELAIS EN COURS</small>
+              <strong>{format(activeMs)}</strong>
+            </div>
+            <div>
+              <small>COURSE</small>
+              <strong>{format(elapsed)}</strong>
+            </div>
+          </div>
+          <p className="driver-warning">
+            Affichage passif uniquement · Fixation et utilisation soumises à
+            l’autorisation du circuit.
+          </p>
+        </main>
+      ) : (
+        <main className="dashboard">
+          <div className="heading">
+            <div>
+              <p className="eyebrow">LILLE KARTING · 900 M · 20 ÉQUIPES</p>
+              <h1>Centre de course</h1>
+              <p className="muted">
+                10h35 — 14h35 · 4 heures · 7 changements minimum
+              </p>
+            </div>
+            <div className="right-head">
+              {configured && !admin ? (
+                <button
+                  className="primary"
+                  onClick={() =>
+                    document
+                      .getElementById("login")
+                      ?.scrollIntoView({ behavior: "smooth" })
+                  }
+                >
+                  <LogIn size={16} /> Connexion stand
+                </button>
+              ) : (
+                <span className="pill">
+                  <ShieldCheck size={15} /> {configured ? "ADMIN" : "MODE DÉMO"}
+                </span>
+              )}
+            </div>
+          </div>
+          {error && (
+            <div className="error">
+              {error}
+              <button onClick={() => setError("")}>×</button>
+            </div>
+          )}
+          <section className="stats">
+            <article className="stat">
+              <span>
+                <Clock3 size={17} /> TEMPS DE COURSE
+              </span>
+              <strong>{format(elapsed)}</strong>
+              <small>
+                {state.startAt ? "Chronomètre lancé" : "Prêt pour le départ"}
+              </small>
+            </article>
+            <article className="stat">
+              <span>
+                <Users size={17} /> PILOTE ACTUEL
+              </span>
+              <strong>{state.activeDriver || "—"}</strong>
+              <small>
+                {state.activeDriver
+                  ? `Roulage : ${format(activeMs)}`
+                  : state.pitSince
+                    ? "Kart aux stands"
+                    : "Aucun pilote actif"}
+              </small>
+            </article>
+            <article className="stat">
+              <span>
+                <RotateCcw size={17} /> CHANGEMENTS
+              </span>
+              <strong>
+                {Math.max(
+                  0,
+                  state.segments.filter((x) => x.phase === "race").length -
+                    (state.activeDriver ? 0 : 1),
+                )}{" "}
+                <em>/ 7 min.</em>
+              </strong>
+              <small>Compteur indicatif</small>
+            </article>
+            <article className="stat">
+              <span>
+                <Fuel size={17} /> RAVITAILLEMENTS
+              </span>
+              <strong>
+                {Number(state.fuel1) + Number(state.fuel2)} <em>/ 2</em>
+              </strong>
+              <small>Deux postes de plein</small>
+            </article>
+          </section>
+          <section className="columns">
+            <div className="stack">
+              <article className="panel">
+                <div className="panel-title">
+                  <h2>
+                    <Radio size={19} /> Consignes au pilote
+                  </h2>
+                  <span className="pill">
+                    {state.activeDriver
+                      ? `PILOTE ${state.activeDriver}`
+                      : "EN ATTENTE"}
+                  </span>
+                </div>
+                <div className="commands">
+                  <button
+                    disabled={!canEdit}
+                    className="command boxcmd"
+                    onClick={() => send("BOX")}
+                  >
+                    BOX <small>RENTRE</small>
+                  </button>
+                  <button
+                    disabled={!canEdit}
+                    className="command pushcmd"
+                    onClick={() => send("PUSH")}
+                  >
+                    PUSH <small>ATTAQUE</small>
+                  </button>
+                  <button
+                    disabled={!canEdit}
+                    className="command staycmd"
+                    onClick={() => send("STAY OUT")}
+                  >
+                    STAY OUT <small>CONTINUE</small>
+                  </button>
+                  <button
+                    disabled={!canEdit}
+                    className="command slowcmd"
+                    onClick={() => send("SLOW")}
+                  >
+                    SLOW <small>PRUDENCE</small>
+                  </button>
+                </div>
+                <div className="input-row">
+                  <input
+                    disabled={!canEdit}
+                    placeholder="Message facultatif (80 caractères)"
+                    value={message}
+                    maxLength={80}
+                    onChange={(e) => setMessage(e.target.value)}
+                  />
+                  <button
+                    disabled={!canEdit}
+                    className="outline"
+                    onClick={() => send("CLEAR")}
+                  >
+                    <Send size={16} /> CLEAR
+                  </button>
+                </div>
+                <p className="muted tiny">
+                  Les consignes expirent après 2 minutes. Elles ne remplacent
+                  jamais les drapeaux et instructions des commissaires.
+                </p>
+              </article>
+              <article className="panel">
+                <div className="panel-title">
+                  <h2>
+                    <Play size={19} /> Gestion des relais
+                  </h2>
+                </div>
+                <div className="input-row">
+                  <label>Type de session</label>
+                  <select
+                    disabled={!canEdit}
+                    value={qual}
+                    onChange={(e) => setQual(e.target.value as Phase)}
+                  >
+                    <option value="qualifying">Qualifications</option>
+                    <option value="race">Course</option>
+                  </select>
+                </div>
+                <div className="driver-buttons">
+                  {drivers.map((d) => (
+                    <button
+                      key={d}
+                      disabled={!canEdit || Boolean(state.activeDriver)}
+                      onClick={() => start(d)}
+                      className="driver-btn"
+                    >
+                      <strong>{d}</strong>
+                      <small>Début relais</small>
+                    </button>
+                  ))}
+                </div>
+                <div className="action-row">
+                  <button
+                    disabled={!canEdit || !state.activeDriver}
+                    className="outline"
+                    onClick={pit}
+                  >
+                    <Pause size={17} /> Entrée au stand / fin du relais
+                  </button>
+                  <button
+                    disabled={!canEdit || Boolean(state.startAt)}
+                    className="outline"
+                    onClick={() =>
+                      save({ ...state, startAt: Date.now(), finishAt: null })
+                    }
+                  >
+                    <Clock3 size={17} /> Départ course
+                  </button>
+                  <button
+                    disabled={
+                      !canEdit || !state.startAt || Boolean(state.finishAt)
+                    }
+                    className="outline"
+                    onClick={() =>
+                      save({
+                        ...closeSegment(state, Date.now()),
+                        finishAt: Date.now(),
+                        pitSince: Date.now(),
+                      })
+                    }
+                  >
+                    <Flag size={17} /> Arrivée
+                  </button>
+                </div>
+                <p className="muted tiny">
+                  À l'entrée au stand, arrête le relais. Démarre le suivant à la
+                  sortie du stand : l'immobilisation n'est pas comptée comme
+                  roulage.
+                </p>
+              </article>
+            </div>
+            <div className="stack">
+              <article className="panel">
+                <div className="panel-title">
+                  <h2>
+                    <Users size={19} /> Temps de roulage
+                  </h2>
+                  <span className="pill">ÉGALITÉ</span>
+                </div>
+                <p className="muted tiny">
+                  Qualifications + course · objectif : même temps pour chacun
+                </p>
+                {drivers.map((d) => {
+                  const ms = total[d].qualifying + total[d].race;
+                  const max = Math.max(
+                    1,
+                    ...drivers.map((x) => total[x].qualifying + total[x].race),
+                  );
+                  return (
+                    <div className="driver-total" key={d}>
+                      <div className="total-line">
+                        <strong>Pilote {d}</strong>
+                        <span>{format(ms)}</span>
+                      </div>
+                      <div className="track">
+                        <div
+                          className="fill"
+                          style={{ width: `${(ms / max) * 100}%` }}
+                        />
+                      </div>
+                      <small>
+                        Qualif {format(total[d].qualifying)} · Course{" "}
+                        {format(total[d].race)}
+                      </small>
+                    </div>
+                  );
+                })}
+                <div className="balance">
+                  Écart max :{" "}
+                  {format(
+                    Math.max(
+                      ...drivers.map(
+                        (d) => total[d].qualifying + total[d].race,
+                      ),
+                    ) -
+                      Math.min(
+                        ...drivers.map(
+                          (d) => total[d].qualifying + total[d].race,
+                        ),
+                      ),
+                  )}
+                </div>
+              </article>
+              <article className="panel">
+                <div className="panel-title">
+                  <h2>
+                    <Fuel size={19} /> Ravitaillements
+                  </h2>
+                </div>
+                <div className="fuel-row">
+                  <div>
+                    <strong>Ravitaillement 1</strong>
+                    <small>11h50 – 12h20</small>
+                  </div>
+                  <button
+                    disabled={!canEdit}
+                    className={state.fuel1 ? "done" : "outline"}
+                    onClick={() => save({ ...state, fuel1: !state.fuel1 })}
+                  >
+                    {state.fuel1 ? "✓ Effectué" : "Marquer effectué"}
+                  </button>
+                </div>
+                <div className="fuel-row">
+                  <div>
+                    <strong>Ravitaillement 2</strong>
+                    <small>13h05 – 13h35</small>
+                  </div>
+                  <button
+                    disabled={!canEdit}
+                    className={state.fuel2 ? "done" : "outline"}
+                    onClick={() => save({ ...state, fuel2: !state.fuel2 })}
+                  >
+                    {state.fuel2 ? "✓ Effectué" : "Marquer effectué"}
+                  </button>
+                </div>
+                <p className="muted tiny">
+                  Fenêtres horaires officielles. Les indicateurs ne prouvent pas
+                  qu'un plein a été réalisé.{" "}
+                  {fuel1Window
+                    ? "Fenêtre 1 en cours."
+                    : fuel2Window
+                      ? "Fenêtre 2 en cours."
+                      : ""}
+                </p>
+              </article>
+              <article className="panel">
+                <div className="panel-title">
+                  <h2>
+                    <Clock3 size={19} /> Historique des relais
+                  </h2>
+                </div>
+                <div className="history">
+                  {state.segments.length ? (
+                    state.segments
+                      .slice()
+                      .reverse()
+                      .map((s) => (
+                        <div key={s.id}>
+                          <strong>{s.driver}</strong>
+                          <span>
+                            {s.phase === "race" ? "Course" : "Qualifs"}
+                          </span>
+                          <span>
+                            {clock(s.start)} → {clock(s.end)}
+                          </span>
+                          <b>{format(s.end - s.start)}</b>
+                        </div>
+                      ))
+                  ) : (
+                    <p className="muted">Aucun relais terminé.</p>
+                  )}
+                </div>
+              </article>
+            </div>
+          </section>
+          <section className="panel bottom-panel">
+            <h2>Administration</h2>
+            {configured && !admin ? (
+              <form id="login" className="login" onSubmit={login}>
+                <input
+                  type="email"
+                  placeholder="Email administrateur"
+                  required
+                  value={email}
+                  onChange={(e) => setEmail(e.target.value)}
+                />
+                <input
+                  type="password"
+                  placeholder="Mot de passe"
+                  required
+                  value={password}
+                  onChange={(e) => setPassword(e.target.value)}
+                />
+                <button className="primary" type="submit">
+                  <LogIn size={16} /> Connexion
+                </button>
+              </form>
+            ) : (
+              <div className="action-row">
+                <button
+                  className="outline"
+                  onClick={() => setConfirmReset(!confirmReset)}
+                >
+                  <RotateCcw size={16} /> Réinitialiser la course
+                </button>
+                {configured && (
+                  <button className="outline" onClick={() => signOut(auth!)}>
+                    <LogOut size={16} /> Déconnexion
+                  </button>
+                )}
+                {confirmReset && (
+                  <button
+                    className="danger"
+                    onClick={() => {
+                      void save({ ...initial, updatedAt: Date.now() });
+                      setConfirmReset(false);
+                    }}
+                  >
+                    Confirmer la réinitialisation
+                  </button>
+                )}
+              </div>
+            )}
+            <p className="muted tiny">
+              {configured
+                ? "Mode Firebase : données synchronisées entre appareils authentifiés."
+                : "Mode démonstration : les données restent dans ce navigateur et se synchronisent seulement entre onglets de la même origine."}
+            </p>
+          </section>
+        </main>
+      )}
+      <footer>
+        KART LIVE · Application d'assistance — respectez toujours les consignes
+        de sécurité du circuit.
+      </footer>
+    </div>
+  );
 }
-createRoot(document.getElementById('root')!).render(<React.StrictMode><App/></React.StrictMode>);
+createRoot(document.getElementById("root")!).render(
+  <React.StrictMode>
+    <App />
+  </React.StrictMode>,
+);
