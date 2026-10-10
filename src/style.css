@@ -221,7 +221,7 @@ button.subtle {
 .optional-message {
   margin-top: 10px;
 }
-.pilot-command-panel .send-message {
+.direct-message-custom .send-message {
   flex: 0 0 42px;
   width: 42px;
   height: 42px;
@@ -261,7 +261,7 @@ button.subtle {
 }
 .columns {
   display: grid;
-  grid-template-columns: minmax(0, 1.18fr) minmax(0, 1fr);
+  grid-template-columns: minmax(0, 1fr);
   gap: 20px;
 }
 .stack {
@@ -598,6 +598,7 @@ button.subtle {
 }
 .tabs {
   display: flex;
+  flex-wrap: wrap;
   gap: 8px;
   margin-bottom: 20px;
   border-bottom: 1px solid #26364c;
@@ -616,6 +617,48 @@ button.subtle {
 .tab-active {
   color: #fff;
   border-bottom-color: #f5c84b;
+}
+.direct-messages {
+  display: grid;
+  gap: 24px;
+}
+.message-duration {
+  flex-wrap: wrap;
+}
+.message-duration input {
+  flex: 0 0 100px;
+  width: 100px;
+}
+.direct-message-actions {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 200px), 1fr));
+  gap: 12px;
+}
+.direct-message-actions button {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  min-height: 64px;
+  border-radius: 8px;
+  font-size: 20px;
+  font-weight: 800;
+}
+.direct-message-red,
+.signal-message-red:not(.signal-finished) {
+  color: #fff;
+  background: #e13e46;
+  border-color: #ff6672;
+}
+.direct-message-green,
+.signal-message-green:not(.signal-finished) {
+  color: #fff;
+  background: #1f986b;
+  border-color: #48dba5;
+}
+.direct-message-custom {
+  border-top: 1px solid #26364c;
+  padding-top: 20px;
 }
 .config {
   display: flex;
@@ -1009,13 +1052,14 @@ button.subtle {
 }
 .race-phase-status {
   display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
+  grid-template-columns: repeat(3, minmax(0, 1fr));
   align-items: center;
   gap: 10px;
   min-width: 0;
 }
 .phase-timer,
-.phase-remaining {
+.phase-remaining,
+.phase-relays {
   display: grid;
   justify-items: center;
   align-content: center;
@@ -1042,6 +1086,28 @@ button.subtle {
   color: #91a2ba;
   font-size: 10px;
   font-weight: 800;
+}
+.phase-relays small {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  color: #91a2ba;
+  font-size: 11px;
+  font-weight: 800;
+}
+.phase-relays strong {
+  font-size: 23px;
+  font-variant-numeric: tabular-nums;
+}
+.phase-relays em {
+  color: #91a2ba;
+  font-size: 12px;
+  font-style: normal;
+  white-space: nowrap;
+}
+.phase-relays > span {
+  color: #91a2ba;
+  font-size: 10px;
 }
 .phase-confirm {
   grid-column: 1 / -1;
@@ -1368,6 +1434,18 @@ footer {
   text-align: center;
   margin: 0;
 }
+.driver-view:not(.driver-view-with-message) .signal {
+  display: none;
+}
+.driver-view:not(.driver-view-with-message) .driver-side,
+.driver-view:not(.driver-view-with-message) .driver-bottom {
+  flex: 1;
+  min-height: 0;
+}
+.driver-view:not(.driver-view-with-message) .driver-bottom .driver-pilot-timer strong,
+.driver-view:not(.driver-view-with-message) .driver-bottom .driver-global-timer strong {
+  font-size: clamp(38px, min(18dvh, 18vw), 144px);
+}
 @media (max-width: 900px) {
   .stats {
     grid-template-columns: repeat(2, 1fr);
@@ -1569,7 +1647,7 @@ footer {
   }
   .driver-view:not(.driver-view-with-message) {
     grid-template-columns: minmax(0, 1fr);
-    grid-template-rows: auto 64px minmax(0, 1fr);
+    grid-template-rows: auto minmax(0, 1fr);
   }
   .driver-meta {
     grid-column: 1 / -1;
@@ -1585,16 +1663,6 @@ footer {
   .driver-view.driver-view-with-message .signal {
     min-height: 0;
   }
-  .driver-view:not(.driver-view-with-message) .signal {
-    grid-column: 1;
-    grid-row: 2;
-    min-height: 0;
-    padding: 6px 12px;
-    border-radius: 12px;
-  }
-  .driver-view:not(.driver-view-with-message) .signal-title {
-    font-size: 28px;
-  }
   .signal-title {
     font-size: clamp(50px, 16vh, 88px);
   }
@@ -1607,7 +1675,7 @@ footer {
   }
   .driver-view:not(.driver-view-with-message) .driver-side {
     grid-column: 1;
-    grid-row: 3;
+    grid-row: 2;
     min-height: 0;
     justify-content: stretch;
   }

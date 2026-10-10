@@ -75,6 +75,7 @@ export type EventState = {
   raceId: string;
   signal: Signal;
   message: string;
+  messageColor?: "red" | "green" | "default";
   signalAt: number;
   signalConfirmedAt: number;
   signalExpiresAt: number;
